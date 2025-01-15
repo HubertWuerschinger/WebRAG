@@ -44,7 +44,7 @@ def main():
     st.set_page_config(page_title="Körber AI Assistant", page_icon=":factory:")
     st.header("🔍 Frag die Körber-Daten")
 
-    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
     generation_config = {
         "temperature": 0.2,
