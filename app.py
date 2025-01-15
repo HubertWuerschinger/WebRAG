@@ -41,7 +41,7 @@ def get_response(context, question, model):
 # --- Hauptprozess ---
 def main():
     load_dotenv()
-    st.set_page_config(page_title="Körber AI Assistant", page_icon=":factory:")
+    st.set_page_config(page_title="REP AI Chatbot", page_icon=":factory:")
     st.header("🔍 Frag die Körber-Daten")
 
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -61,7 +61,7 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
     # --- Benutzerabfrage ---
-    query = st.text_input("Stelle eine Frage zu den Körber-Daten")
+    query = st.text_input("Stelle eine Frage zum REP")
 
     if st.button("Antwort generieren") and query:
         with st.spinner("Antwort wird generiert..."):
