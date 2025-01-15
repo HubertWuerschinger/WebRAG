@@ -10,7 +10,7 @@ from datasets import load_dataset
 
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
-    dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
+    dataset = load_dataset("json", data_files={"train": "koerber_scraped_data.jsonl"})
     documents = [doc["completion"] for doc in dataset["train"]]
     return documents
 
