@@ -7,8 +7,6 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 
-# API-Schlüssel sicher aus Streamlit Secrets laden
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
