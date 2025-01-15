@@ -1,27 +1,20 @@
 import os
 import streamlit as st
 import google.generativeai as genai
+from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from dotenv import load_dotenv
-import requests
-from bs4 import BeautifulSoup
-import streamlit as st
+from datasets import load_dataset
 
 # API-Schlüssel sicher aus Streamlit Secrets laden
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# --- Web Scraping der Körber-Website ---
-def scrape_koerber_website(url="https://www.koerber.com/"):
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        text_content = " ".join([p.get_text() for p in soup.find_all("p")])
-        return text_content
-    except Exception as e:
-        st.warning(f"Fehler beim Abrufen der Website: {e}")
-        return ""
+# --- Körber-Daten aus der JSON-Datei laden ---
+def load_koerber_data():
+    dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
+    documents = [doc["completion"] for doc in dataset["train"]]
+    return documents
 
 # --- Vektorspeicher erstellen ---
 def get_vector_store(text_chunks):
@@ -31,9 +24,8 @@ def get_vector_store(text_chunks):
         return vectorstore
     except:
         st.warning("Fehler beim Erstellen des Vektorspeichers.")
-        return None
 
-# --- Kontextbezogene Antwort generieren ---
+# --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
     Du bist ein hilfreicher Assistent, der Fragen basierend auf dem folgenden Kontext beantwortet:
@@ -51,8 +43,8 @@ def get_response(context, question, model):
 # --- Hauptprozess ---
 def main():
     load_dotenv()
-    st.set_page_config(page_title="Körber AI Assistant", page_icon=":robot_face:")
-    st.header("🔍 Frag die Körber-Website")
+    st.set_page_config(page_title="Körber AI Assistant", page_icon=":factory:")
+    st.header("🔍 Frag die Körber-Daten")
 
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
@@ -64,14 +56,14 @@ def main():
     }
 
     if "vectorstore" not in st.session_state:
-        with st.spinner("Daten von der Körber-Website werden geladen..."):
-            website_text = scrape_koerber_website()
+        with st.spinner("Daten werden geladen..."):
+            documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-            text_chunks = text_splitter.split_text(website_text)
+            text_chunks = text_splitter.split_text(" ".join(documents))
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
     # --- Benutzerabfrage ---
-    query = st.text_input("Stelle eine Frage zur Körber-Website")
+    query = st.text_input("Stelle eine Frage zu den Körber-Daten")
 
     if st.button("Antwort generieren") and query:
         with st.spinner("Antwort wird generiert..."):
@@ -85,3 +77,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
