@@ -7,6 +7,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
+import streamlit as st
+
+# API-Schlüssel sicher aus Streamlit Secrets laden
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # --- Web Scraping der Körber-Website ---
 def scrape_koerber_website(url="https://www.koerber.com/"):
