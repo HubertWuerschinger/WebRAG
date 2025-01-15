@@ -42,7 +42,7 @@ def get_response(context, question, model):
 def main():
     load_dotenv()
     st.set_page_config(page_title="REP AI Chatbot", page_icon=":factory:")
-    st.header("🔍 Frag die Körber-Daten")
+    st.header("🔍 Stell deine Fragen")
 
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
