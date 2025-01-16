@@ -7,21 +7,20 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 
-
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    documents = [doc["completion"] for doc in dataset["train"]]
+    documents = [{"content": doc["completion"], "url": doc["meta"]["url"]} for doc in dataset["train"]]
     return documents
 
 # --- Vektorspeicher erstellen ---
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+        vectorstore = FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
         return vectorstore
-    except:
-        st.warning("Fehler beim Erstellen des Vektorspeichers.")
+    except Exception as e:
+        st.warning(f"Fehler beim Erstellen des Vektorspeichers: {e}")
 
 # --- Antwort generieren ---
 def get_response(context, question, model):
@@ -57,8 +56,9 @@ def main():
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-            text_chunks = text_splitter.split_text(" ".join(documents))
+            text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
+            st.session_state.documents = text_chunks
 
     # --- Benutzerabfrage ---
     query = st.text_input("Frag Körber")
@@ -68,11 +68,18 @@ def main():
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(query, k=5)
+            
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, query, model)
+            
             st.success("Antwort:")
             st.write(result)
 
+            st.markdown("### Quellen")
+            for doc in relevant_content:
+                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
+                if matching_doc:
+                    st.markdown(f"[Mehr erfahren]({matching_doc['url']})")
+
 if __name__ == "__main__":
     main()
-
