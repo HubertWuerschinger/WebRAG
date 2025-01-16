@@ -52,13 +52,20 @@ def main():
         "max_output_tokens": 8000,
     }
 
+    # --- Session State initialisieren ---
     if "vectorstore" not in st.session_state:
+        st.session_state.vectorstore = None
+    if "documents" not in st.session_state:
+        st.session_state.documents = []
+
+    # --- Vektorspeicher laden ---
+    if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
-            st.session_state.documents = text_chunks
+            st.session_state.documents = text_chunks  # <-- Initialisierung hinzugefügt
 
     # --- Benutzerabfrage ---
     query = st.text_input("Frag Körber")
