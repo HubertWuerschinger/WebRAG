@@ -65,7 +65,7 @@ def main():
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
-            st.session_state.documents = text_chunks  # <-- Initialisierung hinzugefügt
+            st.session_state.documents = text_chunks
 
     # --- Benutzerabfrage ---
     query = st.text_input("Frag Körber")
@@ -75,17 +75,22 @@ def main():
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(query, k=5)
-            
+
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, query, model)
-            
+
             st.success("Antwort:")
             st.write(result)
 
-            st.markdown("### Quellen")
-            for doc in relevant_content:
+            # --- Top 3 passende URLs anzeigen ---
+            st.markdown("### 🔗 Quellen")
+            shown_urls = set()  # Um doppelte Links zu vermeiden
+
+            # Top 3 passende URLs anzeigen
+            for doc in relevant_content[:3]:
                 matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-                if matching_doc:
+                if matching_doc and matching_doc["url"] not in shown_urls:
+                    shown_urls.add(matching_doc["url"])
                     st.markdown(f"[Mehr erfahren]({matching_doc['url']})")
 
 if __name__ == "__main__":
