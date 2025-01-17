@@ -7,7 +7,7 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
-from datetime import datetime
+from collections import Counter
 
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
@@ -15,7 +15,7 @@ def load_koerber_data():
     documents = [{
         "content": doc["completion"],
         "url": doc["meta"]["url"],
-        "timestamp": doc["meta"].get("timestamp", datetime.now().isoformat()),
+        "timestamp": doc["meta"].get("timestamp", ""),
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
     return documents
@@ -29,25 +29,43 @@ def get_vector_store(text_chunks):
     except Exception as e:
         st.warning(f"Fehler beim Erstellen des Vektorspeichers: {e}")
 
-# --- Schlagwörter extrahieren (max. 3 anzeigen) ---
+# --- Erweiterte Schlagwort-Extraktion ---
 def extract_keywords(text, max_keywords=3):
-    stopwords = ["der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei"]
-    words = re.findall(r'\b[A-ZÄÖÜ][a-zäöüß]+\b', text)
-    keywords = [word for word in words if word.lower() not in stopwords]
-    return list(set(keywords))[:max_keywords]  # Begrenzung auf 3 Schlagwörter
+    # Relevante Berufs- und Fachbegriffe
+    domain_terms = [
+        "Ingenieur", "Maschinenbau", "Automatisierung", "Logistik", "Softwareentwicklung",
+        "IT", "Projektmanagement", "Mechatronik", "Produktion", "Innovation"
+    ]
+
+    # Erweiterte Stopwords-Liste
+    stopwords = [
+        "der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei",
+        "dies", "da", "stellenangebote", "ist", "ein", "eine", "im", "sowie", "mehr", "bitte", "job", "jobs"
+    ]
+
+    # Nur Wörter mit mind. 3 Buchstaben, keine Stopwords
+    words = re.findall(r'\b[A-ZÄÖÜa-zäöüß]{3,}\b', text)
+    words_filtered = [word for word in words if word.lower() not in stopwords]
+
+    # Fachbegriffe bevorzugen
+    keywords = [word for word in words_filtered if word in domain_terms]
+
+    # Wenn keine Fachbegriffe gefunden, dann häufigste Wörter nutzen
+    if not keywords:
+        keywords_counter = Counter(words_filtered)
+        keywords = [word for word, _ in keywords_counter.most_common(max_keywords)]
+
+    return keywords[:max_keywords]
 
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein hilfreicher Assistent (Experte für Logistik, Ingenieurwesen und Personalwesen).
-    Beantworte die folgende Frage ausführlich und präzise basierend auf dem bereitgestellten Kontext.
+    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
 
     Kontext: {context}\n
     Frage: {question}\n
 
-    Antwortstruktur:
-    - **Antwort:** (Detaillierte und präzise Antwort)
-    - **Beispiele:** (3 konkrete Handlungsvorschläge, falls möglich)
+    Antworte strukturiert und liefere 3 praxisnahe Beispiele.
     """
     try:
         response = model.generate_content(prompt_template)
@@ -84,8 +102,7 @@ def main():
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-            text_chunks = [{"content": chunk, "url": doc["url"], "timestamp": doc["timestamp"], "title": doc["title"]}
-                           for doc in documents for chunk in text_splitter.split_text(doc["content"])]
+            text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
@@ -94,7 +111,7 @@ def main():
 
     # --- Button für direkte Anfrage ---
     if st.button("Antwort generieren") and query_input:
-        st.session_state.query = query_input  # Speichere die Anfrage
+        st.session_state.query = query_input
 
     # --- Generiere Antwort, wenn eine Anfrage existiert ---
     if st.session_state.query:
@@ -103,18 +120,12 @@ def main():
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
-            # --- Kontext aufbauen ---
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, st.session_state.query, model)
 
-            # --- Schlagwörter aus Antwort extrahieren (max. 3) ---
+            # --- Optimierte Schlagwörter extrahieren ---
             keywords = extract_keywords(result, max_keywords=3)
 
-            # --- Schlagwörter für erneute Suche nutzen ---
-            refined_query = " ".join(keywords)
-            relevant_content = vectorstore.similarity_search(refined_query, k=5)
-
-            # --- Ergebnis anzeigen ---
             st.success("Antwort:")
             st.write(result)
 
@@ -122,21 +133,10 @@ def main():
             st.markdown("### 📌 Relevante Themen")
             st.write(f"**Schlagwörter:** {', '.join(keywords)}")
 
-            # --- Interaktive Buttons zu den Schlagwörtern ---
+            # --- Buttons für weitere Infos ---
             for i, keyword in enumerate(keywords):
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
-
-            # --- Top 3 passende URLs nach Datum sortiert anzeigen ---
-            st.markdown("### 🔗 Neueste Quellen")
-            shown_urls = set()
-            for doc in relevant_content[:3]:
-                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-                if matching_doc and matching_doc["url"] not in shown_urls:
-                    shown_urls.add(matching_doc["url"])
-                    date = matching_doc.get("timestamp", "Kein Datum")
-                    title = matching_doc.get("title", "Kein Titel")
-                    st.markdown(f"- [{title}]({matching_doc['url']}) _(Veröffentlicht am: {date})_")
 
 if __name__ == "__main__":
     main()
