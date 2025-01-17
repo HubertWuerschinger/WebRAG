@@ -6,19 +6,18 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
+import re
 import folium
 from streamlit_folium import st_folium
-import requests
 
-# 🔑 API-Schlüssel laden
+# 📌 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")  # Google Maps API-Key
-    if not api_key or not maps_api_key:
+    if not api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key, maps_api_key
+    return api_key
 
 # 📂 Körber-Daten laden
 def load_koerber_data():
@@ -39,52 +38,35 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 📍 Geocoding: Adresse → Koordinaten
-def geocode_address(address, maps_api_key):
+# 🔍 Schlagwort-Extraktion mit Gemini
+def extract_keywords_with_llm(model, query):
+    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
-        response = requests.get(
-            f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={maps_api_key}"
-        )
-        data = response.json()
-        if data['status'] == 'OK':
-            location = data['results'][0]['geometry']['location']
-            return location['lat'], location['lng']
-        else:
-            st.warning("❗ Adresse konnte nicht gefunden werden.")
-            return None, None
+        response = model.generate_content(prompt)
+        return re.findall(r'\b\w{3,}\b', response.text)
     except Exception as e:
-        st.error(f"Fehler bei der Geocodierung: {e}")
-        return None, None
+        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
+        return []
 
-# 🔍 Standortsuche mit Gemini
-def search_location_with_gemini(model, query, vectorstore):
-    prompt = f"""
-    Suche in den folgenden Daten nach Standortinformationen für die Anfrage: {query}.
-    Gib nur Adressen im Format: [Adresse, Stadt, PLZ] zurück.
-    """
-    relevant_content = vectorstore.similarity_search(query, k=5)
-    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+# 📊 Durchsuche Vektordatenbank nach der Benutzeranfrage
+def search_vectorstore(vectorstore, query, k=5):
+    relevant_content = vectorstore.similarity_search(query, k=k)
+    return "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
 
+# 🗺️ Extrahiere Standortinformationen aus der Antwort
+def extract_address_with_llm(model, text):
+    prompt = f"Extrahiere aus diesem Text die Adresse im Format 'Straße, Stadt':\n\n{text}"
     try:
-        search_prompt = f"{prompt}\n\n{context}"
-        response = model.generate_content(search_prompt)
+        response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        st.error(f"Fehler bei der Standortsuche: {e}")
+        st.error(f"Fehler bei der Adress-Extraktion: {e}")
         return ""
 
-# 🗺️ Dynamische Folium-Karte mit exakten Koordinaten
-def show_dynamic_map(location, tooltip):
-    if location is None:
-        return  # Keine Karte anzeigen, wenn keine Koordinaten vorhanden sind
-
+# 🗺️ Zeige Standort auf der Karte an
+def show_map_with_marker(location, tooltip):
     m = folium.Map(location=location, zoom_start=14)
-    folium.Marker(
-        location=location,
-        popup=f"<b>{tooltip}</b>",
-        tooltip=tooltip
-    ).add_to(m)
-
+    folium.Marker(location=location, popup=f"<b>{tooltip}</b>", tooltip=tooltip).add_to(m)
     st_folium(m, width=700, height=500)
 
 # 🚀 Hauptprozess
@@ -92,7 +74,7 @@ def main():
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
-    api_key, maps_api_key = load_api_keys()
+    api_key = load_api_keys()
     genai.configure(api_key=api_key)
 
     generation_config = {
@@ -102,7 +84,7 @@ def main():
         "max_output_tokens": 6000,
     }
 
-    # 🛠️ Initialisierung des Session State
+    # Initialisierung des Session State
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -110,38 +92,36 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    if "last_location" not in st.session_state:
-        st.session_state.last_location = None
-        st.session_state.last_tooltip = ""
-
     # 📌 Benutzeranfrage
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
-    with col2:
-        generate_button = st.button("Antwort generieren")
+    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+    generate_button = st.button("Antwort generieren")
 
-    # 🗺️ Karte anzeigen, wenn Daten vorhanden sind
-    if st.session_state.last_location:
-        show_dynamic_map(st.session_state.last_location, st.session_state.last_tooltip)
-
-    # 🔍 Anfrage bearbeiten
+    # 🔍 Verarbeite Benutzeranfrage
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            address = search_location_with_gemini(model, query_input, st.session_state.vectorstore)
 
+            # 🔎 Vektorspeicher durchsuchen
+            context = search_vectorstore(st.session_state.vectorstore, query_input)
+
+            # 🏠 Standortinformationen extrahieren
+            address = extract_address_with_llm(model, context)
+
+            # 📍 Standortanzeige, falls Adresse erkannt
             if address:
-                lat, lng = geocode_address(address, maps_api_key)
-                if lat and lng:
-                    st.session_state.last_location = [lat, lng]
-                    st.session_state.last_tooltip = address
-                    st.success(f"📍 Standort gefunden: {address}")
-                    show_dynamic_map([lat, lng], address)
-                else:
-                    st.warning("⚠️ Standort konnte nicht auf der Karte angezeigt werden.")
+                st.success(f"📍 Gefundene Adresse: {address}")
+                # Adresse geokodieren (hier Beispielkoordinaten für Hamburg)
+                if "Hamburg" in address:
+                    show_map_with_marker([53.5450, 10.0290], tooltip=address)
+                elif "Berlin" in address:
+                    show_map_with_marker([52.5200, 13.4050], tooltip=address)
             else:
-                st.warning("⚠️ Kein Standort gefunden. Bitte präzisiere deine Anfrage.")
+                st.info("📝 Keine Standortinformationen gefunden.")
+
+            # 📝 Antwort ausgeben
+            st.success("Antwort:")
+            st.write(f"**Eingabe:** {query_input}")
+            st.write(context)
 
 if __name__ == "__main__":
     main()
