@@ -12,10 +12,11 @@ import re
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not api_key or not maps_api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key
+    return api_key, maps_api_key
 
 # 📂 Lädt die JSONL-Daten für den Vektorspeicher
 def load_koerber_data():
@@ -54,18 +55,14 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📝 Generiert strukturierte Antworten basierend auf Kontext
-def generate_response(context, question, model):
-    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
-    try:
-        return model.generate_content(prompt).text
-    except Exception as e:
-        st.error(f"Fehler bei der Generierung: {e}")
-        return "Leider konnte keine Antwort generiert werden."
+# 📍 Google Maps Integration zur Standortanzeige
+def show_google_map(location, maps_api_key):
+    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={location.replace(' ', '+')}"
+    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
 def main():
-    api_key = load_api_keys()
+    api_key, maps_api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
@@ -92,7 +89,6 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    # 🔄 Eingabefeld und Button nebeneinander
     col1, col2 = st.columns([4, 1])
 
     with col1:
@@ -101,23 +97,21 @@ def main():
     with col2:
         generate_button = st.button("Antwort generieren")
 
-    # 🔎 Antwort generieren bei Buttonklick
     if generate_button and query_input:
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             keywords = extract_keywords_with_llm(model, st.session_state.query)
             context, urls = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
-            result = generate_response(context, st.session_state.query, model)
 
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
-            st.write(result)
+            st.write(context)
 
-            # 🏷️ Relevante Schlagwörter anzeigen
-            if keywords:
-                st.markdown("### 🏷️ **Relevante Schlagwörter:**")
-                st.write(", ".join(keywords))
+            # 📍 Zeige Google Maps, wenn nach Standorten gefragt wird
+            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
+                st.markdown("### 📍 **Standort auf Google Maps:**")
+                show_google_map("Körber AG Hamburg", maps_api_key)
 
             # 🔗 Passende Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
@@ -126,12 +120,6 @@ def main():
                     st.markdown(f"- [Mehr erfahren]({url})")
 
             st.session_state.query = ""
-
-    # 💡 Beispielanfragen
-    st.markdown("### 💡 **Beispielanfragen:**")
-    st.markdown("- Wie viele Mitarbeiter hat Körber?")
-    st.markdown("- Welche Produkte bietet Körber im Bereich Logistik an?")
-    st.markdown("- Wo befinden sich die Standorte von Körber?")
 
 if __name__ == "__main__":
     main()
