@@ -52,7 +52,7 @@ def extract_keywords(text, max_keywords=3):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
+    Du bist ein Chatbot und hast Expertenwissen für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext in strukturierter form. Bei nicht vorhandenem wissen verweise auf ansprechpartner und internetseiten von körber:
 
     Kontext: {context}\n
     Frage: {question}\n
