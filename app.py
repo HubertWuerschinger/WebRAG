@@ -30,7 +30,7 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# --- Erweiterte Schlagwort-Extraktion ---
+# --- Schlagwort-Extraktion ---
 def extract_keywords(text, max_keywords=3):
     domain_terms = ["Ingenieur", "Maschinenbau", "Automatisierung", "Logistik", "Softwareentwicklung",
                     "IT", "Projektmanagement", "Mechatronik", "Produktion", "Innovation"]
@@ -40,7 +40,6 @@ def extract_keywords(text, max_keywords=3):
 
     words = re.findall(r'\b[A-ZÄÖÜa-zäöüß]{3,}\b', text)
     words_filtered = [word for word in words if word.lower() not in stopwords]
-
     keywords = [word for word in words_filtered if word in domain_terms]
 
     if not keywords:
@@ -49,29 +48,22 @@ def extract_keywords(text, max_keywords=3):
 
     return keywords[:max_keywords]
 
-    # --- Generiere Antwort, wenn eine Anfrage existiert ---
-    if st.session_state.query:
-        with st.spinner("Antwort wird generiert..."):
-            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            vectorstore = st.session_state.vectorstore
-            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
-    
-            # KORREKT: Zugriff auf "content"
-            context = "\n".join([doc["content"] for doc in relevant_content])
-            result = get_response(context, st.session_state.query, model)
-    
-            # Schlagwörter aus dem Ergebnis extrahieren
-            keywords = extract_keywords(result)
-    
-            st.success("Antwort:")
-            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
-    
-            # Interaktive Buttons für relevante Themen
-            st.markdown("### 📌 Relevante Themen")
-            for i, keyword in enumerate(keywords):
-                if st.button(f"Mehr zu: {keyword}", key=f"keyword_button_{i}"):
-                    st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
-                    st.experimental_rerun()
+# --- Antwort generieren ---
+def get_response(context, question, model):
+    prompt_template = f"""
+    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
+
+    Kontext: {context}\n
+    Frage: {question}\n
+
+    Antworte strukturiert und liefere 3 praxisnahe Beispiele.
+    """
+    try:
+        response = model.generate_content(prompt_template)
+        return response.text
+    except Exception as e:
+        st.error(f"Fehler bei der Generierung: {e}")
+        return ""
 
 # --- Hauptprozess ---
 def main():
@@ -114,7 +106,7 @@ def main():
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
-            context = "\n".join([doc.page_content for doc in relevant_content])
+            context = "\n".join([doc["content"] for doc in relevant_content])
             result = get_response(context, st.session_state.query, model)
 
             keywords = extract_keywords(result)
@@ -122,11 +114,12 @@ def main():
             st.success("Antwort:")
             st.write(result)
 
+            # --- Relevante Themen anzeigen ---
             st.markdown("### 📌 Relevante Themen")
             for i, keyword in enumerate(keywords):
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
-                    st.experimental_rerun()
+                    st.rerun()  # <--- VERBESSERT
 
 if __name__ == "__main__":
     main()
