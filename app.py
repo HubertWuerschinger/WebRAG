@@ -1,23 +1,23 @@
 import os
 import streamlit as st
-import google.generativeai as genai
 from dotenv import load_dotenv
+from datasets import load_dataset
+import re
+import folium
+from streamlit_folium import st_folium
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from datasets import load_dataset
-import re
-import urllib.parse
+import google.generativeai as genai
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    if not api_key or not maps_api_key:
+    if not api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key, maps_api_key
+    return api_key
 
 # 📂 Lädt die JSONL-Daten für den Vektorspeicher
 def load_koerber_data():
@@ -48,24 +48,27 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query
+# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📍 Google Maps Integration zur Standortanzeige
-def show_google_map(location, maps_api_key):
-    encoded_location = urllib.parse.quote(location)
-    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={encoded_location}"
-    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" '
-                f'src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
+# 🗺️ Zeigt interaktive Folium-Karte mit Standort an
+def show_interactive_map(location):
+    # Beispieladresse: "Körber AG Anckelmannsplatz 1, 20537 Hamburg"
+    map_center = [53.550341, 10.000654]  # Hamburg Koordinaten
+    m = folium.Map(location=map_center, zoom_start=14)
+    folium.Marker(location=map_center, tooltip=location, popup=location).add_to(m)
+
+    # Interaktive Karte anzeigen
+    st_folium(m, width=700, height=450)
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
 def main():
-    api_key, maps_api_key = load_api_keys()
+    api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
@@ -105,10 +108,10 @@ def main():
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(context)
 
-            # 📍 Standortanzeige auf Google Maps
+            # 🗺️ Standort anzeigen, wenn nach Adresse gefragt wird
             if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
-                st.markdown("### 📍 **Standort auf Google Maps:**")
-                show_google_map("Körber AG Anckelmannsplatz 1, 20537 Hamburg", maps_api_key)
+                st.markdown("### 📍 **Standort auf der Karte:**")
+                show_interactive_map("Körber AG Anckelmannsplatz 1, 20537 Hamburg")
 
             # 🔗 Relevante Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
