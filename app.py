@@ -92,6 +92,14 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
+    # Session State für Ergebnisse initialisieren
+    if "response" not in st.session_state:
+        st.session_state.response = ""
+    if "address_info" not in st.session_state:
+        st.session_state.address_info = ""
+    if "location" not in st.session_state:
+        st.session_state.location = None
+
     # 📌 Benutzeranfrage
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
@@ -107,26 +115,27 @@ def main():
             # 🏠 Standortinformationen extrahieren
             address_info = extract_address_with_llm(model, context)
 
-            # 📍 Standortanzeige
+            # 📍 Standortanzeige mit Karte
             if address_info:
-                st.success(f"📍 Gefundene Adresse und Informationen: {address_info}")
+                st.session_state.address_info = address_info
 
-                # Dynamische Standortanzeige auf der Karte
+                # Dynamische Standortanzeige
                 if "Hamburg" in address_info:
-                    show_map_with_marker([53.5450, 10.0290], tooltip=address_info)
+                    st.session_state.location = [53.5450, 10.0290]
                 elif "Berlin" in address_info:
-                    show_map_with_marker([52.5200, 13.4050], tooltip=address_info)
+                    st.session_state.location = [52.5200, 13.4050]
 
-                # 🔗 Relevante Links ausgeben
-                st.markdown("### 🔗 **Weitere Informationen:**")
-                st.write(context)
-            else:
-                st.info("📝 Keine standortbezogenen Informationen gefunden.")
+                st.session_state.response = context
 
-            # 📝 Antwort anzeigen
-            st.success("Antwort:")
-            st.write(f"**Eingabe:** {query_input}")
-            st.write(context)
+    # 📍 Karte anzeigen, wenn Standortinformation existiert
+    if st.session_state.location:
+        show_map_with_marker(st.session_state.location, tooltip=st.session_state.address_info)
+        st.success(f"📍 Standort: {st.session_state.address_info}")
+
+    # 📝 Ergebnis anzeigen
+    if st.session_state.response:
+        st.success("📝 Antwort:")
+        st.write(st.session_state.response)
 
 if __name__ == "__main__":
     main()
