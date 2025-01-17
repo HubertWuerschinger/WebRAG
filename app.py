@@ -84,14 +84,14 @@ def main():
         "temperature": 0.2,
         "top_p": 0.9,
         "top_k": 20,
-        "max_output_tokens": 3000,
+        "max_output_tokens": 6000,
     }
 
     # 📦 Vektorspeicher initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=300)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_optimized_vector_store(text_chunks)
 
