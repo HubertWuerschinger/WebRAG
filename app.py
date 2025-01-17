@@ -7,7 +7,7 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
-import urllib.parse  # Für URL-Encoding
+import urllib.parse
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
@@ -52,23 +52,14 @@ def extract_keywords_with_llm(model, query):
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
-    
-    # Robustere URL-Extraktion
-    urls = []
-    for doc in relevant_content:
-        meta = getattr(doc, "metadata", {})
-        url = meta.get("url", "")
-        if url:
-            urls.append(url)
-    
+    context = "\n\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
 # 📍 Google Maps Integration zur Standortanzeige
 def show_google_map(location, maps_api_key):
     encoded_location = urllib.parse.quote(location)
     map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={encoded_location}"
-    
     st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" '
                 f'src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
 
@@ -102,7 +93,7 @@ def main():
             st.session_state.documents = text_chunks
 
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
-    
+
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
@@ -114,12 +105,12 @@ def main():
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(context)
 
-            # 📍 Zeige Google Maps, wenn nach Standorten gefragt wird
+            # 📍 Standortanzeige auf Google Maps
             if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
                 st.markdown("### 📍 **Standort auf Google Maps:**")
-                show_google_map("Körber AG Hamburg", maps_api_key)
+                show_google_map("Körber AG Anckelmannsplatz 1, 20537 Hamburg", maps_api_key)
 
-            # 🔗 Passende Links anzeigen
+            # 🔗 Relevante Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
