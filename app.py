@@ -1,23 +1,22 @@
 import os
 import streamlit as st
+import google.generativeai as genai
 from dotenv import load_dotenv
-from datasets import load_dataset
-import re
-import folium
-from streamlit_folium import st_folium
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-import google.generativeai as genai
+from datasets import load_dataset
+import re
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not api_key or not maps_api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key
+    return api_key, maps_api_key
 
 # 📂 Lädt die JSONL-Daten für den Vektorspeicher
 def load_koerber_data():
@@ -52,23 +51,37 @@ def extract_keywords_with_llm(model, query):
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 🗺️ Zeigt interaktive Folium-Karte mit Standort an
-def show_interactive_map(location):
-    # Beispieladresse: "Körber AG Anckelmannsplatz 1, 20537 Hamburg"
-    map_center = [53.550341, 10.000654]  # Hamburg Koordinaten
-    m = folium.Map(location=map_center, zoom_start=14)
-    folium.Marker(location=map_center, tooltip=location, popup=location).add_to(m)
+# 📍 Google Maps Integration zur Standortanzeige
+def show_google_map(location, maps_api_key):
+    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={location.replace(' ', '+')}"
+    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
 
-    # Interaktive Karte anzeigen
-    st_folium(m, width=700, height=450)
+# 📝 Generiert strukturierte Antworten mit Gemini
+def generate_response_with_gemini(vectorstore, query, model, k=5):
+    keywords = extract_keywords_with_llm(model, query)
+    context, urls = search_vectorstore(vectorstore, keywords, query, k)
+    prompt_template = f"""
+    Du bist ein Experte für Logistik und Ingenieurwesen. Beantworte die folgende Frage basierend auf dem Kontext:
+
+    Kontext: {context}
+    Frage: {query}
+
+    Antworte strukturiert mit Beispielen und passenden Links.
+    """
+    try:
+        response = model.generate_content(prompt_template)
+        return response.text, urls
+    except Exception as e:
+        st.error(f"Fehler bei der Antwortgenerierung: {e}")
+        return "Es ist ein Fehler aufgetreten.", []
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
 def main():
-    api_key = load_api_keys()
+    api_key, maps_api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
@@ -95,25 +108,28 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+    col1, col2 = st.columns([4, 1])
 
-    if st.button("Antwort generieren") and query_input:
+    with col1:
+        query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+
+    with col2:
+        generate_button = st.button("Antwort generieren")
+
+    if generate_button and query_input:
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            keywords = extract_keywords_with_llm(model, st.session_state.query)
-            context, urls = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
+            result, urls = generate_response_with_gemini(st.session_state.vectorstore, st.session_state.query, model)
 
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
-            st.write(context)
+            st.write(result)
 
-            # 🗺️ Standort anzeigen, wenn nach Adresse gefragt wird
-            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
-                st.markdown("### 📍 **Standort auf der Karte:**")
-                show_interactive_map("Körber AG Anckelmannsplatz 1, 20537 Hamburg")
+            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in extract_keywords_with_llm(model, query_input)):
+                st.markdown("### 📍 **Standort auf Google Maps:**")
+                show_google_map("Körber AG Hamburg", maps_api_key)
 
-            # 🔗 Relevante Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
