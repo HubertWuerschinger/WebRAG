@@ -40,23 +40,42 @@ def get_vector_store(text_chunks):
 
 # 🔍 Schlagwort-Extraktion mit Gemini
 def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
+    prompt = f"Extrahiere relevante Standortinformationen aus dieser Anfrage:\n\n{query}\n\nGib nur Städte oder Adressen zurück."
     try:
         response = model.generate_content(prompt)
-        return re.findall(r'\b\w{3,}\b', response.text)
+        return re.findall(r'[A-Za-zäöüÄÖÜß\s,.-]+', response.text)
     except Exception as e:
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 🗺️ Folium-Karte mit Marker und Tooltip
-def show_map_with_marker(location=[53.5450, 10.0290], tooltip="Körber AG, Hamburg"):
-    m = folium.Map(location=location, zoom_start=14)
-    folium.Marker(
-        location=location,
-        popup=f"<b>{tooltip}</b>",
-        tooltip=tooltip
-    ).add_to(m)
-    
+# 📍 Extrahiere Standorte aus der Vektordatenbank
+def extract_locations_from_vectorstore(vectorstore, keywords):
+    combined_query = " ".join(keywords)
+    relevant_docs = vectorstore.similarity_search(combined_query, k=5)
+
+    # Sammelt mögliche Standortinformationen
+    locations = []
+    for doc in relevant_docs:
+        content = getattr(doc, "page_content", getattr(doc, "content", ""))
+        matches = re.findall(r'\d{5}\s[A-Za-zäöüÄÖÜß\s]+', content)  # Adresse (PLZ Stadt)
+        locations.extend(matches)
+
+    return list(set(locations))  # Doppelte entfernen
+
+# 🗺️ Dynamische Folium-Karte mit mehreren Markern
+def show_map_with_markers(locations):
+    m = folium.Map(location=[53.5450, 10.0290], zoom_start=5)
+
+    # Marker für alle Standorte setzen
+    for location in locations:
+        # Für dieses Beispiel statisch, später dynamisch mit Geo-Coding
+        tooltip = location
+        folium.Marker(
+            location=[53.5450, 10.0290],  # Dummy-Koordinaten ersetzen
+            popup=f"<b>{tooltip}</b>",
+            tooltip=tooltip
+        ).add_to(m)
+
     # Karte in Streamlit anzeigen
     st_folium(m, width=700, height=500)
 
@@ -75,7 +94,6 @@ def main():
         "max_output_tokens": 6000,
     }
 
-    # Initialisierung des Session State
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -91,19 +109,22 @@ def main():
         generate_button = st.button("Antwort generieren")
 
     # 🗺️ Immer eine Standardkarte anzeigen
-    show_map_with_marker()  # Standardkarte ohne Marker
+    show_map_with_markers(["Anckelmannsplatz 1, 20537 Hamburg"])  # Standardstandort
 
-    # 🔍 Wenn Button geklickt wird
+    # 🔍 Verarbeitung der Benutzeranfrage
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             keywords = extract_keywords_with_llm(model, query_input)
 
-            # Standortanfrage erkennen
-            if any(keyword in ["standort", "adresse", "hamburg", "büro"] for keyword in keywords):
-                # 🗺️ Standort auf der Karte anzeigen
-                show_map_with_marker(location=[53.5450, 10.0290], tooltip="Körber AG, Anckelmannsplatz 1, Hamburg")
-                st.success("📍 Standort von Körber AG in Hamburg angezeigt!")
+            # Standorte aus Vektorspeicher extrahieren
+            locations = extract_locations_from_vectorstore(st.session_state.vectorstore, keywords)
+
+            if locations:
+                st.success("📍 Standorte wurden auf der Karte angezeigt!")
+                show_map_with_markers(locations)
+            else:
+                st.warning("⚠️ Keine Standorte gefunden.")
 
             st.success("📝 Antwort:")
             st.write(f"**Eingabe:** {query_input}")
