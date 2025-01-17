@@ -93,7 +93,7 @@ def main():
         "temperature": 0.2,
         "top_p": 0.9,
         "top_k": 30,
-        "max_output_tokens": 3000,
+        "max_output_tokens": 30,
     }
 
     # 📦 Initialisierung des Vektorspeichers
