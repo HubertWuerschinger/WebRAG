@@ -10,7 +10,10 @@ import re
 import folium
 from streamlit_folium import st_folium
 
-# 🔑 API-Schlüssel laden
+# ⚠️ Setze die Konfiguration direkt nach den Imports
+st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
+
+# 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -19,7 +22,7 @@ def load_api_keys():
         st.stop()
     return api_key
 
-# 📂 Daten laden
+# 📂 Lädt die JSONL-Daten für den Vektorspeicher
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{
@@ -29,7 +32,7 @@ def load_koerber_data():
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
 
-# 📦 Vektorspeicher erstellen
+# 📦 Erzeugt den Vektorspeicher mit FAISS
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -57,19 +60,16 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     return context, urls[:3]
 
 # 📍 Google Maps über Folium anzeigen
-def show_google_map_folium(location):
-    # Erstelle eine Folium-Karte mit dem angegebenen Standort
-    map_object = folium.Map(location=location, zoom_start=15)
-    folium.Marker(location, popup="Körber AG", tooltip="Hier ist Körber AG").add_to(map_object)
-    
-    # Zeige die Folium-Karte in Streamlit
-    st_folium(map_object, width=700, height=500)
+def show_google_map_folium(location, tooltip="Körber AG"):
+    # Erstelle eine Folium-Karte mit Marker
+    m = folium.Map(location=location, zoom_start=15)
+    folium.Marker(location, popup=tooltip, tooltip=tooltip).add_to(m)
+    st_folium(m, width=700, height=500)
 
 # 🚀 Hauptfunktion
 def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
-    st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
     generation_config = {
@@ -113,12 +113,12 @@ def main():
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(context)
 
-            # 📍 Standort anzeigen, wenn nach Standorten gefragt wird
+            # 📍 Zeige Google Maps, wenn nach Standorten gefragt wird
             if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
                 st.markdown("### 📍 **Standort auf Google Maps:**")
-                show_google_map_folium([53.5500, 10.0000])  # Hamburg
+                # Standort für Körber AG: Anckelmannsplatz 1, 20537 Hamburg
+                show_google_map_folium([53.5450, 10.0290], tooltip="Körber AG Hamburg")
 
-            # 🔗 Relevante Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
