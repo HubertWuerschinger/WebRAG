@@ -37,7 +37,7 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Standortsuche mit Gemini in der Vektordatenbank
+# 🔍 Standortsuche mit Gemini
 def search_location_with_gemini(model, query, vectorstore):
     prompt = f"""
     Suche in den folgenden Daten nach Standortinformationen für die Anfrage: {query}.
@@ -46,7 +46,6 @@ def search_location_with_gemini(model, query, vectorstore):
     relevant_content = vectorstore.similarity_search(query, k=5)
     context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
 
-    # Gemini verarbeitet den Kontext zur Extraktion der Adresse
     try:
         search_prompt = f"{prompt}\n\n{context}"
         response = model.generate_content(search_prompt)
@@ -57,22 +56,18 @@ def search_location_with_gemini(model, query, vectorstore):
 
 # 🗺️ Dynamische Folium-Karte mit Gemini-Daten
 def show_dynamic_map_with_gemini(location_data):
-    if location_data:
-        m = folium.Map(location=[53.55, 10.00], zoom_start=6)
-        addresses = location_data.split("\n")
+    m = folium.Map(location=[53.55, 10.00], zoom_start=6)
 
+    if location_data:
+        addresses = location_data.split("\n")
         for address in addresses:
-            # Gemini gibt Adressen im Format "[Adresse, Stadt, PLZ]" zurück
-            geolocator = folium.GeoJsonTooltip(fields=[address])
             folium.Marker(
-                location=[53.55, 10.00],  # Dummy-Koordinaten werden später durch echte ersetzt
+                location=[53.55, 10.00],  # Dummy-Koordinaten (könnten durch Geocoding ersetzt werden)
                 popup=f"<b>{address}</b>",
                 tooltip=address
             ).add_to(m)
 
-        st_folium(m, width=700, height=500)
-    else:
-        st.warning("⚠️ Kein Standort gefunden. Bitte erneut versuchen.")
+    st_folium(m, width=700, height=500)
 
 # 🚀 Hauptprozess
 def main():
@@ -89,13 +84,16 @@ def main():
         "max_output_tokens": 6000,
     }
 
-    # Vektorspeicher initialisieren
+    # 🛠️ Initialisierung des Session State
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
+
+    if "location_data" not in st.session_state:
+        st.session_state.location_data = ""
 
     # 📌 Benutzeranfrage
     col1, col2 = st.columns([4, 1])
@@ -104,6 +102,13 @@ def main():
     with col2:
         generate_button = st.button("Antwort generieren")
 
+    # 🗺️ Karte anzeigen, wenn Daten vorhanden sind
+    if st.session_state.location_data:
+        show_dynamic_map_with_gemini(st.session_state.location_data)
+    else:
+        # Standardkarte ohne Marker
+        show_dynamic_map_with_gemini("")
+
     # 🔍 Anfrage bearbeiten
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
@@ -111,9 +116,8 @@ def main():
             location_info = search_location_with_gemini(model, query_input, st.session_state.vectorstore)
 
             if location_info:
-                st.success("📍 Standort gefunden:")
-                st.write(location_info)
-                show_dynamic_map_with_gemini(location_info)
+                st.session_state.location_data = location_info
+                st.success("📍 Standort gefunden und Karte aktualisiert!")
             else:
                 st.warning("⚠️ Kein Standort gefunden. Bitte präzisiere deine Anfrage.")
 
