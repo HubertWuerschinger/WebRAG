@@ -49,9 +49,10 @@ def extract_keywords(text, max_keywords=3):
     return keywords[:max_keywords]
 
 # --- Antwort generieren ---
-def get_response(context, question, model):
+# --- Antwort generieren mit dynamischer Keywordsuche ---
+def get_response(context, question, model, documents):
     prompt_template = f"""
-    Du bist ein hilfsbereiter Chatbot und Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage strukturiert basierend auf dem Kontext der per jsonl zur Verfügung gestellt wurde.:
+    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
 
     Kontext: {context}\n
     Frage: {question}\n
@@ -59,11 +60,40 @@ def get_response(context, question, model):
     Antworte strukturiert und liefere 3 praxisnahe Beispiele.
     """
     try:
+        # Dynamische Suche, wenn die Vektorsuche nichts Passendes liefert
+        fallback_result = search_dynamic_content(documents, question)
+        if fallback_result and fallback_result != "Keine passenden Informationen gefunden.":
+            return f"Direkt gefunden: {fallback_result}"
+
+        # Standardantwort mit Vektorsuche
         response = model.generate_content(prompt_template)
         return response.text
     except Exception as e:
         st.error(f"Fehler bei der Generierung: {e}")
         return ""
+
+import re
+
+# --- Dynamische Schlagwort-Extraktion aus der Benutzeranfrage ---
+def extract_dynamic_keywords(query):
+    # Extrahiere bedeutungsvolle Begriffe (z.B. Substantive, Begriffe mit mind. 3 Buchstaben)
+    words = re.findall(r'\b[A-ZÄÖÜa-zäöüß]{3,}\b', query)
+    stopwords = ["wie", "viel", "hat", "haben", "ist", "sind", "der", "die", "das", "und", "von", "mit", "für", "bei"]
+    
+    # Filtere Stopwords heraus
+    keywords = [word.lower() for word in words if word.lower() not in stopwords]
+    return keywords
+
+# --- Direkte Suche in den Dokumenten basierend auf Benutzer-Keywords ---
+def search_dynamic_content(documents, query):
+    # Dynamisch extrahierte Keywords aus der Benutzeranfrage
+    dynamic_keywords = extract_dynamic_keywords(query)
+    
+    # Durchsuche die Dokumente nach den extrahierten Keywords
+    for doc in documents:
+        if any(keyword in doc["content"].lower() for keyword in dynamic_keywords):
+            return doc["content"]
+    return "Keine passenden Informationen gefunden."
 
 # --- Hauptprozess ---
 def main():
