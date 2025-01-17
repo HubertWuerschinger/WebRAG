@@ -50,25 +50,16 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query
-
+# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    return "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
-
-# 📝 Generiert strukturierte Antworten basierend auf Kontext
-
-def generate_response(context, question, model):
-    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen und füge Links und Adresse dazu wenn möglich:\n\nKontext: {context}\nFrage: {question}"
-    try:
-        return model.generate_content(prompt).text
-    except Exception as e:
-        st.error(f"Fehler bei der Generierung: {e}")
-        return ""
+    # Kontext und URLs extrahieren
+    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    urls = [getattr(doc, "metadata", {}).get("url", "") for doc in relevant_content]
+    return context, urls[:3]  # Nur die Top 3 URLs zurückgeben
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
-
 def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
@@ -82,6 +73,7 @@ def main():
         "max_output_tokens": 6000,
     }
 
+    # Initialisierung des Session State
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
@@ -89,6 +81,7 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
+    # Vektorspeicher laden
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -110,13 +103,22 @@ def main():
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             keywords = extract_keywords_with_llm(model, st.session_state.query)
-            context = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
+            context, urls = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
             result = generate_response(context, st.session_state.query, model)
+            
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(result)
-            st.session_state.query = ""
 
+            # 🔗 Passende Links anzeigen
+            st.markdown("### 🔗 Relevante Links:")
+            for url in urls:
+                if url:  # Nur gültige URLs anzeigen
+                    st.markdown(f"- [Mehr erfahren]({url})")
+
+            st.session_state.query = ""  # Eingabefeld zurücksetzen
+
+    # 💡 Beispielanfragen
     st.markdown("### 💡 Beispielanfragen:")
     st.markdown("- Wie viele Mitarbeiter hat Körber?")
     st.markdown("- Welche Produkte bietet Körber im Bereich Logistik an?")
