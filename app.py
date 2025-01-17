@@ -7,82 +7,68 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
+from collections import Counter
 
-# --- 1. Körber-Daten aus der JSON-Datei laden ---
+# --- Sicherheitsmaßnahmen: Laden von Umgebungsvariablen ---
+def load_api_keys():
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
+        st.stop()
+    return api_key
+
+# --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    documents = [{
+    return [{
         "content": doc["completion"],
-        "url": doc["meta"]["url"],
+        "url": doc["meta"].get("url", ""),
         "timestamp": doc["meta"].get("timestamp", ""),
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
-    return documents
 
-# --- 2. Vektorspeicher erstellen ---
+# --- Vektorspeicher erstellen ---
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        vectorstore = FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
-        return vectorstore
+        return FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
     except Exception as e:
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# --- 3. Schlagwörter mit Gemini extrahieren ---
-def extract_keywords_with_gemini(question, model):
-    prompt_template = f"""
-    Extrahiere die 3 wichtigsten Schlagwörter aus folgender Frage. Gib nur die Schlagwörter als Liste zurück:
-
-    Frage: {question}
-    """
+# --- Keywords mit LLM extrahieren ---
+def extract_keywords_with_llm(model, query):
+    prompt = f"Extrahiere prägnante Schlagwörter aus der folgenden Anfrage: {query}"
     try:
-        response = model.generate_content(prompt_template)
-        keywords = re.findall(r'\b\w+\b', response.text)
-        return keywords[:3]  # Maximal 3 Schlagwörter
+        response = model.generate_content(prompt)
+        return re.findall(r'\b\w{3,}\b', response.text)
     except Exception as e:
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# --- 4. Dynamische Suche in den Dokumenten ---
-def search_dynamic_content_with_keywords(documents, keywords, query):
-    combined_search_terms = keywords + query.split()
+# --- Dokumente nach Keywords durchsuchen ---
+def search_documents(documents, keywords):
     for doc in documents:
-        content_lower = doc["content"].lower()
-        if any(term.lower() in content_lower for term in combined_search_terms):
+        if any(keyword.lower() in doc["content"].lower() for keyword in keywords):
             return doc["content"]
     return "Keine passenden Informationen gefunden."
 
-# --- 5. Antwort generieren ---
-def get_response(context, question, model, documents):
-    extracted_keywords = extract_keywords_with_gemini(question, model)
-    fallback_result = search_dynamic_content_with_keywords(documents, extracted_keywords, question)
-
-    if fallback_result != "Keine passenden Informationen gefunden.":
-        return f"Direkt gefunden: {fallback_result}"
-
-    prompt_template = f"""
-    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
-
-    Kontext: {context}\n
-    Frage: {question}\n
-
-    Antworte strukturiert und liefere 3 praxisnahe Beispiele.
-    """
+# --- Antwort generieren ---
+def generate_response(context, question, model):
+    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
     try:
-        response = model.generate_content(prompt_template)
-        return response.text
+        return model.generate_content(prompt).text
     except Exception as e:
         st.error(f"Fehler bei der Generierung: {e}")
         return ""
 
-# --- 6. Hauptprozess ---
+# --- Hauptprozess ---
 def main():
-    load_dotenv()
+    api_key = load_api_keys()
+    genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Stell deine Fragen")
-
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
     generation_config = {
         "temperature": 0.2,
@@ -98,7 +84,6 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
-    # --- Vektorspeicher und Dokumente laden ---
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -107,21 +92,21 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    # --- Benutzerabfrage ---
     query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
 
-    # --- Antwort generieren ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            vectorstore = st.session_state.vectorstore
-            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
+            keywords = extract_keywords_with_llm(model, st.session_state.query)
+            result = search_documents(st.session_state.documents, keywords)
 
-            context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
-            result = get_response(context, st.session_state.query, model, st.session_state.documents)
+            if result == "Keine passenden Informationen gefunden.":
+                relevant_content = st.session_state.vectorstore.similarity_search(st.session_state.query, k=5)
+                context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+                result = generate_response(context, st.session_state.query, model)
 
             st.success("Antwort:")
             st.write(result)
