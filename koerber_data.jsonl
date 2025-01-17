@@ -1034,3 +1034,21 @@
     "timestamp": "2025-01-16T21:56:35.694723"
   }
 }
+{
+  "prompt": "Was enthält die Seite 'Kontakt - Körber AG Berlin'?",
+  "completion": "Die Körber AG hat einen Standort in der Friedrichstraße 123, 10117 Berlin.",
+  "meta": {
+    "title": "Kontakt - Körber AG Berlin",
+    "url": "https://www.koerber.com/kontakt-berlin",
+    "timestamp": "2025-01-16T21:58:12.123456"
+  }
+}
+{
+  "prompt": "Was enthält die Seite 'Kontakt - Körber AG München'?",
+  "completion": "Die Körber AG betreibt einen Standort in der Leopoldstraße 45, 80802 München.",
+  "meta": {
+    "title": "Kontakt - Körber AG München",
+    "url": "https://www.koerber.com/kontakt-muenchen",
+    "timestamp": "2025-01-16T21:59:45.987654"
+  }
+}
