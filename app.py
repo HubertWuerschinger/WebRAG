@@ -29,18 +29,18 @@ def get_vector_store(text_chunks):
     except Exception as e:
         st.warning(f"Fehler beim Erstellen des Vektorspeichers: {e}")
 
-# --- Schlagwörter extrahieren ---
-def extract_keywords(text):
+# --- Schlagwörter extrahieren (max. 3 anzeigen) ---
+def extract_keywords(text, max_keywords=3):
     stopwords = ["der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei"]
     words = re.findall(r'\b[A-ZÄÖÜ][a-zäöüß]+\b', text)
     keywords = [word for word in words if word.lower() not in stopwords]
-    return list(set(keywords))
+    return list(set(keywords))[:max_keywords]  # Begrenzung auf 3 Schlagwörter
 
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
     Du bist ein hilfreicher Assistent (Experte für Verarbeitung von Homepagedaten, Logistik und HR), der Fragen strukturiert beantwortet.
-    Zuerst nennst du die relevanten Schlagwörter und gibst, wenn möglich, 3 passende Beispiele:
+    Zuerst nennst du die relevanten Schlagwörter (max. 3) und gibst, wenn möglich, 3 passende Beispiele:
 
     Kontext: {context}\n
     Frage: {question}\n
@@ -105,15 +105,15 @@ def main():
             context = "\n".join([doc.page_content for doc in sorted_content])
             result = get_response(context, st.session_state.query, model)
 
-            # --- Schlagwörter aus Antwort extrahieren ---
-            keywords = extract_keywords(result)
+            # --- Schlagwörter aus Antwort extrahieren (max. 3) ---
+            keywords = extract_keywords(result, max_keywords=3)
 
             st.success("Antwort:")
             st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
 
-            # --- Interaktive Überschriften mit Button ---
+            # --- Interaktive Buttons zu den Schlagwörtern ---
             st.markdown("### 📌 Relevante Themen")
-            for i, keyword in enumerate(keywords[:5]):
+            for i, keyword in enumerate(keywords):
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
 
