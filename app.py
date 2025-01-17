@@ -57,6 +57,8 @@ def main():
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
         st.session_state.documents = []
+    if "query" not in st.session_state:
+        st.session_state.query = ""
 
     # --- Vektorspeicher laden ---
     if st.session_state.vectorstore is None:
@@ -68,35 +70,45 @@ def main():
             st.session_state.documents = text_chunks
 
     # --- Benutzerabfrage ---
-    query = st.text_input("Frag Körber")
+    query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
-    if st.button("Antwort generieren") and query:
+    # --- Button für direkte Anfrage ---
+    if st.button("Antwort generieren") and query_input:
+        st.session_state.query = query_input  # Speichere die Anfrage
+
+    # --- Generiere Antwort, wenn eine Anfrage existiert ---
+    if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
-            relevant_content = vectorstore.similarity_search(query, k=5)
+            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
             context = "\n".join([doc.page_content for doc in relevant_content])
-            result = get_response(context, query, model)
+            result = get_response(context, st.session_state.query, model)
 
             st.success("Antwort:")
             st.write(result)
 
-            # --- Top 3 passende URLs anzeigen mit Direktanfrage ---
-            st.markdown("### 🔗 Quellen")
-            shown_urls = set()
-
+            # --- Interaktive Überschriften mit Button ---
+            st.markdown("### 📌 Relevante Themen")
             for i, doc in enumerate(relevant_content[:3]):
+                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
+                if matching_doc:
+                    title = matching_doc["content"][:100]  # Erstes Stück Text als Vorschau
+                    if st.button(f"Mehr zu: {title}", key=f"more_info_{i}"):
+                        # Neue Anfrage setzen und Seite neuladen
+                        st.session_state.query = f"Gib mir mehr dazu zu: {title}"
+                        st.experimental_rerun()
+
+            # --- Top 3 passende URLs anzeigen ---
+            st.markdown("### 🔗 Quellen")
+            shown_urls = set()  # Um doppelte Links zu vermeiden
+
+            for doc in relevant_content[:3]:
                 matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
                 if matching_doc and matching_doc["url"] not in shown_urls:
                     shown_urls.add(matching_doc["url"])
-
-                    # Direktes Ausführen des Prompts beim Klicken
-                    if st.button(f"Mehr zu: {matching_doc['url']}", key=f"more_info_{i}"):
-                        with st.spinner(f"Lade mehr Informationen zu {matching_doc['url']}..."):
-                            detail_result = get_response(matching_doc["content"], f"Gib mir mehr dazu zu: {matching_doc['url']}", model)
-                            st.success(f"Mehr Informationen zu {matching_doc['url']}:")
-                            st.write(detail_result)
+                    st.markdown(f"[Zur Quelle]({matching_doc['url']})")
 
 if __name__ == "__main__":
     main()
