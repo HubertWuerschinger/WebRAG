@@ -1,4 +1,3 @@
-import folium
 import os
 import streamlit as st
 import google.generativeai as genai
@@ -8,18 +7,19 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
+import folium
+from streamlit_folium import st_folium
 
-# 🔑 Lädt den API-Schlüssel aus der .env-Datei
+# 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    if not api_key or not maps_api_key:
+    if not api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key, maps_api_key
+    return api_key
 
-# 📂 Lädt die JSONL-Daten für den Vektorspeicher
+# 📂 Daten laden
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{
@@ -29,7 +29,7 @@ def load_koerber_data():
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
 
-# 📦 Erzeugt den Vektorspeicher mit FAISS
+# 📦 Vektorspeicher erstellen
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -38,9 +38,9 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Extrahiert Schlagwörter aus der Benutzeranfrage mit Gemini
+# 🔍 Schlagwörter mit Gemini extrahieren
 def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Schlagwörter aus der folgenden Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
+    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
         response = model.generate_content(prompt)
         return re.findall(r'\b\w{3,}\b', response.text)
@@ -48,41 +48,26 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
+# 📊 Vektorspeicher durchsuchen
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📍 Google Maps Integration zur Standortanzeige
-def show_google_map(location, maps_api_key):
-    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={location.replace(' ', '+')}"
-    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
+# 📍 Google Maps über Folium anzeigen
+def show_google_map_folium(location):
+    # Erstelle eine Folium-Karte mit dem angegebenen Standort
+    map_object = folium.Map(location=location, zoom_start=15)
+    folium.Marker(location, popup="Körber AG", tooltip="Hier ist Körber AG").add_to(map_object)
+    
+    # Zeige die Folium-Karte in Streamlit
+    st_folium(map_object, width=700, height=500)
 
-# 📝 Generiert strukturierte Antworten mit Gemini
-def generate_response_with_gemini(vectorstore, query, model, k=5):
-    keywords = extract_keywords_with_llm(model, query)
-    context, urls = search_vectorstore(vectorstore, keywords, query, k)
-    prompt_template = f"""
-    Du bist ein Experte für Logistik und Ingenieurwesen. Beantworte die folgende Frage basierend auf dem Kontext:
-
-    Kontext: {context}
-    Frage: {query}
-
-    Antworte strukturiert mit Beispielen und passenden Links.
-    """
-    try:
-        response = model.generate_content(prompt_template)
-        return response.text, urls
-    except Exception as e:
-        st.error(f"Fehler bei der Antwortgenerierung: {e}")
-        return "Es ist ein Fehler aufgetreten.", []
-
-# 🚀 Hauptprozess zur Steuerung des Chatbots
+# 🚀 Hauptfunktion
 def main():
-    api_key, maps_api_key = load_api_keys()
+    api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
@@ -121,22 +106,30 @@ def main():
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            result, urls = generate_response_with_gemini(st.session_state.vectorstore, st.session_state.query, model)
+            keywords = extract_keywords_with_llm(model, st.session_state.query)
+            context, urls = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
 
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
-            st.write(result)
+            st.write(context)
 
-            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in extract_keywords_with_llm(model, query_input)):
+            # 📍 Standort anzeigen, wenn nach Standorten gefragt wird
+            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
                 st.markdown("### 📍 **Standort auf Google Maps:**")
-                show_google_map("Körber AG Hamburg", maps_api_key)
+                show_google_map_folium([53.5500, 10.0000])  # Hamburg
 
+            # 🔗 Relevante Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
                     st.markdown(f"- [Mehr erfahren]({url})")
 
             st.session_state.query = ""
+
+    st.markdown("### 💡 Beispielanfragen:")
+    st.markdown("- Wie viele Mitarbeiter hat Körber?")
+    st.markdown("- Welche Produkte bietet Körber im Bereich Logistik an?")
+    st.markdown("- Wo befinden sich die Standorte von Körber?")
 
 if __name__ == "__main__":
     main()
