@@ -7,11 +7,17 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
+from datetime import datetime
 
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    documents = [{"content": doc["completion"], "url": doc["meta"]["url"]} for doc in dataset["train"]]
+    documents = [{
+        "content": doc["completion"],
+        "url": doc["meta"]["url"],
+        "timestamp": doc["meta"].get("timestamp", datetime.now().isoformat()),
+        "title": doc["meta"].get("title", "Kein Titel")
+    } for doc in dataset["train"]]
     return documents
 
 # --- Vektorspeicher erstellen ---
@@ -33,7 +39,8 @@ def extract_keywords(text):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein hilfreicher Assistent (Experte für verarbeitung von Homepagedaten, sowie Logistik und HR Experte), der Fragen basierend auf dem folgenden Kontext beantwortet und diese strukturiert ausgibt sowie 3 Beispiele wenn möglich mit ausgibt. Weiter sollst du die relevanten Schlagwörter der Nutzeranfragen zuerst als Schlagwort ausgeben:
+    Du bist ein hilfreicher Assistent (Experte für Verarbeitung von Homepagedaten, Logistik und HR), der Fragen strukturiert beantwortet.
+    Zuerst nennst du die relevanten Schlagwörter und gibst, wenn möglich, 3 passende Beispiele:
 
     Kontext: {context}\n
     Frage: {question}\n
@@ -73,7 +80,8 @@ def main():
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-            text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
+            text_chunks = [{"content": chunk, "url": doc["url"], "timestamp": doc["timestamp"], "title": doc["title"]}
+                           for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
@@ -91,7 +99,10 @@ def main():
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
-            context = "\n".join([doc.page_content for doc in relevant_content])
+            # Ergebnisse nach Timestamp sortieren
+            sorted_content = sorted(relevant_content, key=lambda x: x.metadata.get('timestamp', ''), reverse=True)
+
+            context = "\n".join([doc.page_content for doc in sorted_content])
             result = get_response(context, st.session_state.query, model)
 
             # --- Schlagwörter aus Antwort extrahieren ---
@@ -106,17 +117,16 @@ def main():
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
 
-    # --- Top 3 passende URLs anzeigen ---
-    st.markdown("### 🔗 Quellen")
-    shown_urls = set()  # Um doppelte Links zu vermeiden
-
-    if "vectorstore" in st.session_state:
-        relevant_content = st.session_state.vectorstore.similarity_search(st.session_state.query, k=5)
-        for doc in relevant_content[:3]:
-            matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-            if matching_doc and matching_doc["url"] not in shown_urls:
-                shown_urls.add(matching_doc["url"])
-                st.markdown(f"[Zur Quelle]({matching_doc['url']})")
+            # --- Top 3 passende URLs nach Datum sortiert anzeigen ---
+            st.markdown("### 🔗 Neueste Quellen")
+            shown_urls = set()
+            for doc in sorted_content[:3]:
+                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
+                if matching_doc and matching_doc["url"] not in shown_urls:
+                    shown_urls.add(matching_doc["url"])
+                    date = matching_doc.get("timestamp", "Kein Datum")
+                    title = matching_doc.get("title", "Kein Titel")
+                    st.markdown(f"- [{title}]({matching_doc['url']}) _(Veröffentlicht am: {date})_")
 
 if __name__ == "__main__":
     main()
