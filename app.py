@@ -46,13 +46,13 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query
+# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
     context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
-    return context, urls[:3]  # Nur die Top 3 URLs zurückgeben
+    return context, urls[:3]
 
 # 📝 Generiert strukturierte Antworten basierend auf Kontext
 def generate_response(context, question, model):
@@ -92,39 +92,32 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    col1, col2 = st.columns([1, 5])
+    # 🔄 Eingabefeld und Button nebeneinander
+    col1, col2 = st.columns([4, 1])
 
     with col1:
-        st.image("Logibot.webp", width=100)
-
-    with col2:
         query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
 
-    if st.button("Antwort generieren") and query_input:
+    with col2:
+        generate_button = st.button("Antwort generieren")
+
+    # 🔎 Antwort generieren bei Buttonklick
+    if generate_button and query_input:
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            
-            # 📌 Schlagwörter generieren
             keywords = extract_keywords_with_llm(model, st.session_state.query)
-            
-            # 🔍 Vektorsuche mit Keywords
             context, urls = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
-            
-            # 📝 Antwort generieren
             result = generate_response(context, st.session_state.query, model)
 
-            # ✅ Antwort anzeigen
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(result)
 
-            # 📌 Schlagwörter anzeigen
+            # 🏷️ Relevante Schlagwörter anzeigen
             if keywords:
                 st.markdown("### 🏷️ **Relevante Schlagwörter:**")
                 st.write(", ".join(keywords))
-            else:
-                st.write("Keine relevanten Schlagwörter gefunden.")
 
             # 🔗 Passende Links anzeigen
             st.markdown("### 🔗 **Relevante Links:**")
