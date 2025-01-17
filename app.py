@@ -46,33 +46,25 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# --- 5. JSONL-Dokumente nach Schlagwörtern durchsuchen ---
-def search_documents(documents, keywords):
-    for doc in documents:
-        if any(keyword.lower() in doc["content"].lower() for keyword in keywords):
-            return f"{doc['content']}\n\n🔗 [Quelle]({doc['url']})"
-    return "Keine passenden Informationen gefunden."
+# --- 5. Suche im Vektorspeicher mit Schlagwörtern ---
+def search_vectorstore(vectorstore, keywords, query, k=5):
+    combined_query = " ".join(keywords + [query])
+    relevant_content = vectorstore.similarity_search(combined_query, k=k)
+    return "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
 
-# --- 6. Fallback: Antwort mit Vektorspeicher (RAG) generieren ---
+# --- 6. Antwort generieren ---
 def generate_response(context, question, model):
-    prompt = f"""
-    Beantworte die folgende Frage basierend auf diesem Kontext strukturiert und mit 3 Beispielen:
-    
-    Kontext: {context}
-    
-    Frage: {question}
-    """
+    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
     try:
         return model.generate_content(prompt).text
     except Exception as e:
         st.error(f"Fehler bei der Generierung: {e}")
         return ""
 
-# --- 7. Hauptprozess der App ---
+# --- 7. Hauptprozess ---
 def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
-
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Stell deine Fragen")
 
@@ -83,7 +75,6 @@ def main():
         "max_output_tokens": 8000,
     }
 
-    # --- Session State initialisieren ---
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
@@ -91,7 +82,6 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
-    # --- JSONL-Daten laden und Vektorspeicher erstellen ---
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -100,30 +90,17 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    # --- 1. Benutzereingabe ---
     query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
 
-    # --- 2. Schlagwörter mit Gemini extrahieren und 3. JSONL durchsuchen ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-
-            # Schlagwörter aus der Benutzereingabe extrahieren
             keywords = extract_keywords_with_llm(model, st.session_state.query)
-
-            # JSONL-Daten nach den Schlagwörtern durchsuchen
-            result = search_documents(st.session_state.documents, keywords)
-
-            # Fallback auf Vektorspeicher (RAG), falls nichts gefunden wurde
-            if result == "Keine passenden Informationen gefunden.":
-                relevant_content = st.session_state.vectorstore.similarity_search(st.session_state.query, k=5)
-                context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
-                result = generate_response(context, st.session_state.query, model)
-
-            # --- 4. Antwort ausgeben ---
+            context = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
+            result = generate_response(context, st.session_state.query, model)
             st.success("Antwort:")
             st.write(result)
 
