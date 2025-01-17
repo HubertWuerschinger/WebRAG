@@ -51,7 +51,7 @@ def extract_keywords(text, max_keywords=3):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
+    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage strukturiert basierend auf dem Kontext:
 
     Kontext: {context}\n
     Frage: {question}\n
@@ -106,7 +106,9 @@ def main():
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
-            context = "\n".join([doc["content"] for doc in relevant_content])
+            # FEHLER BEHOBEN: Korrekte Attributzugriffe
+            context = "\n".join([doc.page_content if hasattr(doc, 'page_content') else doc.content for doc in relevant_content])
+
             result = get_response(context, st.session_state.query, model)
 
             keywords = extract_keywords(result)
@@ -119,7 +121,7 @@ def main():
             for i, keyword in enumerate(keywords):
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
-                    st.rerun()  # <--- VERBESSERT
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
