@@ -39,11 +39,17 @@ def extract_keywords(text, max_keywords=3):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein hilfreicher Assistent (Experte für Verarbeitung von Homepagedaten, Logistik und HR), der Fragen strukturiert beantwortet.
-    Zuerst nennst du die relevanten Schlagwörter (max. 3) und gibst, wenn möglich, 3 passende Beispiele:
+    Du bist ein hilfreicher Assistent (Experte für Logistik, Ingenieurwesen und Personalwesen). 
+    Beantworte die folgende Frage basierend auf dem bereitgestellten Kontext ausführlich und professionell. 
+    Zeige zuerst **maximal 3 relevante Schlagwörter** an und gib anschließend 3 konkrete und umsetzbare Beispiele, falls möglich.
 
     Kontext: {context}\n
     Frage: {question}\n
+
+    Antwortstruktur:
+    1. **Schlagwörter:** (Maximal 3 relevante Begriffe)
+    2. **Antwort:** (Detaillierte und präzise Antwort)
+    3. **Beispiele:** (3 konkrete Handlungsvorschläge, falls möglich)
     """
     try:
         response = model.generate_content(prompt_template)
@@ -95,38 +101,4 @@ def main():
     # --- Generiere Antwort, wenn eine Anfrage existiert ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
-            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            vectorstore = st.session_state.vectorstore
-            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
-
-            # Ergebnisse nach Timestamp sortieren
-            sorted_content = sorted(relevant_content, key=lambda x: x.metadata.get('timestamp', ''), reverse=True)
-
-            context = "\n".join([doc.page_content for doc in sorted_content])
-            result = get_response(context, st.session_state.query, model)
-
-            # --- Schlagwörter aus Antwort extrahieren (max. 3) ---
-            keywords = extract_keywords(result, max_keywords=3)
-
-            st.success("Antwort:")
-            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
-
-            # --- Interaktive Buttons zu den Schlagwörtern ---
-            st.markdown("### 📌 Relevante Themen")
-            for i, keyword in enumerate(keywords):
-                if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
-                    st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
-
-            # --- Top 3 passende URLs nach Datum sortiert anzeigen ---
-            st.markdown("### 🔗 Neueste Quellen")
-            shown_urls = set()
-            for doc in sorted_content[:3]:
-                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-                if matching_doc and matching_doc["url"] not in shown_urls:
-                    shown_urls.add(matching_doc["url"])
-                    date = matching_doc.get("timestamp", "Kein Datum")
-                    title = matching_doc.get("title", "Kein Titel")
-                    st.markdown(f"- [{title}]({matching_doc['url']}) _(Veröffentlicht am: {date})_")
-
-if __name__ == "__main__":
-    main()
+            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", gener
