@@ -9,7 +9,11 @@ from datasets import load_dataset
 import re
 import folium
 from streamlit_folium import st_folium
-
+st.set_page_config(
+    page_title="streamlit-folium documentation",
+    page_icon=":world_map:️",
+    layout="wide",
+)
 # 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
