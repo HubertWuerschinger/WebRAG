@@ -49,22 +49,29 @@ def extract_keywords(text, max_keywords=3):
 
     return keywords[:max_keywords]
 
-# --- Antwort generieren ---
-def get_response(context, question, model):
-    prompt_template = f"""
-    Du bist ein Chatbot und hast Expertenwissen für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext in strukturierter form. Bei nicht vorhandenem wissen verweise auf ansprechpartner und internetseiten von körber:
-
-    Kontext: {context}\n
-    Frage: {question}\n
-
-    Antworte strukturiert und liefere 3 praxisnahe Beispiele.
-    """
-    try:
-        response = model.generate_content(prompt_template)
-        return response.text
-    except Exception as e:
-        st.error(f"Fehler bei der Generierung: {e}")
-        return ""
+    # --- Generiere Antwort, wenn eine Anfrage existiert ---
+    if st.session_state.query:
+        with st.spinner("Antwort wird generiert..."):
+            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
+            vectorstore = st.session_state.vectorstore
+            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
+    
+            # KORREKT: Zugriff auf "content"
+            context = "\n".join([doc["content"] for doc in relevant_content])
+            result = get_response(context, st.session_state.query, model)
+    
+            # Schlagwörter aus dem Ergebnis extrahieren
+            keywords = extract_keywords(result)
+    
+            st.success("Antwort:")
+            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
+    
+            # Interaktive Buttons für relevante Themen
+            st.markdown("### 📌 Relevante Themen")
+            for i, keyword in enumerate(keywords):
+                if st.button(f"Mehr zu: {keyword}", key=f"keyword_button_{i}"):
+                    st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
+                    st.experimental_rerun()
 
 # --- Hauptprozess ---
 def main():
