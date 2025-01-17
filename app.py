@@ -70,6 +70,13 @@ def main():
     # --- Benutzerabfrage ---
     query = st.text_input("Frag Körber")
 
+    # --- Interaktive Buttons für "Mehr dazu" ---
+    if "more_info" not in st.session_state:
+        st.session_state.more_info = ""
+
+    if st.session_state.more_info:
+        query = f"Gib mir mehr dazu zu: {st.session_state.more_info}"
+
     if st.button("Antwort generieren") and query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
@@ -82,16 +89,25 @@ def main():
             st.success("Antwort:")
             st.write(result)
 
+            # --- Interaktive Überschriften mit Button ---
+            st.markdown("### 📌 Relevante Themen")
+            for i, doc in enumerate(relevant_content[:3]):
+                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
+                if matching_doc:
+                    title = matching_doc["content"][:100]  # Erstes Stück Text als Vorschau
+                    if st.button(f"Mehr zu: {title}", key=f"more_info_{i}"):
+                        st.session_state.more_info = title
+                        st.experimental_rerun()
+
             # --- Top 3 passende URLs anzeigen ---
             st.markdown("### 🔗 Quellen")
             shown_urls = set()  # Um doppelte Links zu vermeiden
 
-            # Top 3 passende URLs anzeigen
             for doc in relevant_content[:3]:
                 matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
                 if matching_doc and matching_doc["url"] not in shown_urls:
                     shown_urls.add(matching_doc["url"])
-                    st.markdown(f"[Mehr erfahren]({matching_doc['url']})")
+                    st.markdown(f"[Zur Quelle]({matching_doc['url']})")
 
 if __name__ == "__main__":
     main()
