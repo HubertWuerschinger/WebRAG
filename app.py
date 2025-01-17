@@ -6,11 +6,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
-import re
 import folium
 from streamlit_folium import st_folium
 
-# 📌 API-Schlüssel laden
+# 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -38,46 +37,42 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Schlagwort-Extraktion mit Gemini
-def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Standortinformationen aus dieser Anfrage:\n\n{query}\n\nGib nur Städte oder Adressen zurück."
+# 🔍 Standortsuche mit Gemini in der Vektordatenbank
+def search_location_with_gemini(model, query, vectorstore):
+    prompt = f"""
+    Suche in den folgenden Daten nach Standortinformationen für die Anfrage: {query}.
+    Gib nur Adressen im Format: [Adresse, Stadt, PLZ] zurück.
+    """
+    relevant_content = vectorstore.similarity_search(query, k=5)
+    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+
+    # Gemini verarbeitet den Kontext zur Extraktion der Adresse
     try:
-        response = model.generate_content(prompt)
-        return re.findall(r'[A-Za-zäöüÄÖÜß\s,.-]+', response.text)
+        search_prompt = f"{prompt}\n\n{context}"
+        response = model.generate_content(search_prompt)
+        return response.text.strip()
     except Exception as e:
-        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
-        return []
+        st.error(f"Fehler bei der Standortsuche: {e}")
+        return ""
 
-# 📍 Extrahiere Standorte aus der Vektordatenbank
-def extract_locations_from_vectorstore(vectorstore, keywords):
-    combined_query = " ".join(keywords)
-    relevant_docs = vectorstore.similarity_search(combined_query, k=5)
+# 🗺️ Dynamische Folium-Karte mit Gemini-Daten
+def show_dynamic_map_with_gemini(location_data):
+    if location_data:
+        m = folium.Map(location=[53.55, 10.00], zoom_start=6)
+        addresses = location_data.split("\n")
 
-    # Sammelt mögliche Standortinformationen
-    locations = []
-    for doc in relevant_docs:
-        content = getattr(doc, "page_content", getattr(doc, "content", ""))
-        matches = re.findall(r'\d{5}\s[A-Za-zäöüÄÖÜß\s]+', content)  # Adresse (PLZ Stadt)
-        locations.extend(matches)
+        for address in addresses:
+            # Gemini gibt Adressen im Format "[Adresse, Stadt, PLZ]" zurück
+            geolocator = folium.GeoJsonTooltip(fields=[address])
+            folium.Marker(
+                location=[53.55, 10.00],  # Dummy-Koordinaten werden später durch echte ersetzt
+                popup=f"<b>{address}</b>",
+                tooltip=address
+            ).add_to(m)
 
-    return list(set(locations))  # Doppelte entfernen
-
-# 🗺️ Dynamische Folium-Karte mit mehreren Markern
-def show_map_with_markers(locations):
-    m = folium.Map(location=[53.5450, 10.0290], zoom_start=5)
-
-    # Marker für alle Standorte setzen
-    for location in locations:
-        # Für dieses Beispiel statisch, später dynamisch mit Geo-Coding
-        tooltip = location
-        folium.Marker(
-            location=[53.5450, 10.0290],  # Dummy-Koordinaten ersetzen
-            popup=f"<b>{tooltip}</b>",
-            tooltip=tooltip
-        ).add_to(m)
-
-    # Karte in Streamlit anzeigen
-    st_folium(m, width=700, height=500)
+        st_folium(m, width=700, height=500)
+    else:
+        st.warning("⚠️ Kein Standort gefunden. Bitte erneut versuchen.")
 
 # 🚀 Hauptprozess
 def main():
@@ -94,6 +89,7 @@ def main():
         "max_output_tokens": 6000,
     }
 
+    # Vektorspeicher initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -108,26 +104,18 @@ def main():
     with col2:
         generate_button = st.button("Antwort generieren")
 
-    # 🗺️ Immer eine Standardkarte anzeigen
-    show_map_with_markers(["Anckelmannsplatz 1, 20537 Hamburg"])  # Standardstandort
-
-    # 🔍 Verarbeitung der Benutzeranfrage
+    # 🔍 Anfrage bearbeiten
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            keywords = extract_keywords_with_llm(model, query_input)
+            location_info = search_location_with_gemini(model, query_input, st.session_state.vectorstore)
 
-            # Standorte aus Vektorspeicher extrahieren
-            locations = extract_locations_from_vectorstore(st.session_state.vectorstore, keywords)
-
-            if locations:
-                st.success("📍 Standorte wurden auf der Karte angezeigt!")
-                show_map_with_markers(locations)
+            if location_info:
+                st.success("📍 Standort gefunden:")
+                st.write(location_info)
+                show_dynamic_map_with_gemini(location_info)
             else:
-                st.warning("⚠️ Keine Standorte gefunden.")
-
-            st.success("📝 Antwort:")
-            st.write(f"**Eingabe:** {query_input}")
+                st.warning("⚠️ Kein Standort gefunden. Bitte präzisiere deine Anfrage.")
 
 if __name__ == "__main__":
     main()
