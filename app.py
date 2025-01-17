@@ -9,6 +9,7 @@ from datasets import load_dataset
 import re
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
+
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -18,6 +19,7 @@ def load_api_keys():
     return api_key
 
 # 📂 Lädt die JSONL-Daten für den Vektorspeicher
+
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{
@@ -28,6 +30,7 @@ def load_koerber_data():
     } for doc in dataset["train"]]
 
 # 📦 Erzeugt den Vektorspeicher mit FAISS
+
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -37,22 +40,25 @@ def get_vector_store(text_chunks):
         return None
 
 # 🔍 Extrahiert Schlagwörter aus der Benutzeranfrage mit Gemini
+
 def extract_keywords_with_llm(model, query):
     prompt = f"Extrahiere relevante Schlagwörter aus der folgenden Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
         response = model.generate_content(prompt)
-        return re.findall(r'\b\w{3,}\b', response.text)  # Nur Wörter mit min. 3 Buchstaben
+        return re.findall(r'\b\w{3,}\b', response.text)
     except Exception as e:
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
 # 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query
+
 def search_vectorstore(vectorstore, keywords, query, k=5):
-    combined_query = " ".join(keywords + [query])  # Kombiniert Keywords mit der Query
+    combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
     return "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
 
 # 📝 Generiert strukturierte Antworten basierend auf Kontext
+
 def generate_response(context, question, model):
     prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
     try:
@@ -62,15 +68,13 @@ def generate_response(context, question, model):
         return ""
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
+
 def main():
-    # 🌐 API konfigurieren
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
-    
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Stell deine Fragen")
 
-    # ⚙️ Konfiguration des Modells
     generation_config = {
         "temperature": 0.2,
         "top_p": 1,
@@ -78,7 +82,6 @@ def main():
         "max_output_tokens": 8000,
     }
 
-    # 🗂️ Initialisierung von Session State
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
@@ -86,7 +89,6 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
-    # 📥 Daten laden und Vektorspeicher aufbauen
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -95,29 +97,19 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    # 🔎 Benutzeranfrage
-    query_input = st.text_input("Frag Körber", value=st.session_state.query)
+    query_input = st.text_input("Frag Körber", value="")
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
-
-    # 📤 Antwort generieren
-    if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            
-            # Schritt 1️⃣: Schlagwörter extrahieren
             keywords = extract_keywords_with_llm(model, st.session_state.query)
-            
-            # Schritt 2️⃣: Vektorspeicher mit Schlagwörtern durchsuchen
             context = search_vectorstore(st.session_state.vectorstore, keywords, st.session_state.query)
-            
-            # Schritt 3️⃣: Antwort generieren
             result = generate_response(context, st.session_state.query, model)
-
-            # 📊 Antwort anzeigen
             st.success("Antwort:")
+            st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(result)
+            st.session_state.query = ""  # Textfeld nach Ausführung zurücksetzen
 
 if __name__ == "__main__":
     main()
