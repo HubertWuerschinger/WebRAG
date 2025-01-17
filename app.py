@@ -7,7 +7,6 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
-from collections import Counter
 
 # --- Sicherheitsmaßnahmen: Laden von Umgebungsvariablen ---
 def load_api_keys():
@@ -37,9 +36,9 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# --- Keywords mit LLM extrahieren ---
+# --- Schlagwörter mit LLM (Gemini) extrahieren ---
 def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere prägnante Schlagwörter aus der folgenden Anfrage: {query}"
+    prompt = f"Extrahiere die relevantesten Schlagwörter aus folgender Anfrage: {query}"
     try:
         response = model.generate_content(prompt)
         return re.findall(r'\b\w{3,}\b', response.text)
@@ -47,7 +46,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# --- Dokumente nach Keywords durchsuchen ---
+# --- Dokumente mit Schlagwörtern durchsuchen ---
 def search_documents(documents, keywords):
     for doc in documents:
         if any(keyword.lower() in doc["content"].lower() for keyword in keywords):
