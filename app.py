@@ -114,20 +114,22 @@ def main():
         st.session_state.query = query_input
 
     # --- Generiere Antwort, wenn eine Anfrage existiert ---
+    # --- Generiere Antwort, wenn eine Anfrage existiert ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
-
+    
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, st.session_state.query, model)
-
-            # --- Optimierte Schlagwörter extrahieren ---
-            keywords = extract_keywords(result, max_keywords=3)
-
+    
+            # --- Schlagwörter aus Absätzen extrahieren ---
+            keywords = extract_keywords_from_paragraphs(result)
+    
             st.success("Antwort:")
-            st.write(result)
+            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
+
 
             # --- Schlagwörter anzeigen ---
             st.markdown("### 📌 Relevante Themen")
