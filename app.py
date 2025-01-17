@@ -6,6 +6,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
+import re
 
 # --- Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
@@ -21,6 +22,13 @@ def get_vector_store(text_chunks):
         return vectorstore
     except Exception as e:
         st.warning(f"Fehler beim Erstellen des Vektorspeichers: {e}")
+
+# --- Schlagwörter extrahieren ---
+def extract_keywords(text):
+    stopwords = ["der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei"]
+    words = re.findall(r'\b[A-ZÄÖÜ][a-zäöüß]+\b', text)
+    keywords = [word for word in words if word.lower() not in stopwords]
+    return list(set(keywords))
 
 # --- Antwort generieren ---
 def get_response(context, question, model):
@@ -86,29 +94,29 @@ def main():
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, st.session_state.query, model)
 
+            # --- Schlagwörter aus Antwort extrahieren ---
+            keywords = extract_keywords(result)
+
             st.success("Antwort:")
-            st.write(result)
+            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
 
             # --- Interaktive Überschriften mit Button ---
             st.markdown("### 📌 Relevante Themen")
-            for i, doc in enumerate(relevant_content[:3]):
-                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-                if matching_doc:
-                    title = matching_doc["content"][:100]  # Erstes Stück Text als Vorschau
-                    if st.button(f"Mehr zu: {title}", key=f"more_info_{i}"):
-                        # Neue Anfrage setzen und Seite neuladen
-                        st.session_state.query = f"Gib mir mehr dazu zu: {title}"
-                        st.experimental_rerun()
+            for i, keyword in enumerate(keywords[:5]):
+                if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
+                    st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
 
-            # --- Top 3 passende URLs anzeigen ---
-            st.markdown("### 🔗 Quellen")
-            shown_urls = set()  # Um doppelte Links zu vermeiden
+    # --- Top 3 passende URLs anzeigen ---
+    st.markdown("### 🔗 Quellen")
+    shown_urls = set()  # Um doppelte Links zu vermeiden
 
-            for doc in relevant_content[:3]:
-                matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
-                if matching_doc and matching_doc["url"] not in shown_urls:
-                    shown_urls.add(matching_doc["url"])
-                    st.markdown(f"[Zur Quelle]({matching_doc['url']})")
+    if "vectorstore" in st.session_state:
+        relevant_content = st.session_state.vectorstore.similarity_search(st.session_state.query, k=5)
+        for doc in relevant_content[:3]:
+            matching_doc = next((item for item in st.session_state.documents if item["content"] == doc.page_content), None)
+            if matching_doc and matching_doc["url"] not in shown_urls:
+                shown_urls.add(matching_doc["url"])
+                st.markdown(f"[Zur Quelle]({matching_doc['url']})")
 
 if __name__ == "__main__":
     main()
