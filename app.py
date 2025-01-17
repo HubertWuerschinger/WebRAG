@@ -60,7 +60,7 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
 # 📝 Generiert strukturierte Antworten basierend auf Kontext
 
 def generate_response(context, question, model):
-    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
+    prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen und füge Links und Adresse dazu wenn möglich:\n\nKontext: {context}\nFrage: {question}"
     try:
         return model.generate_content(prompt).text
     except Exception as e:
@@ -73,13 +73,13 @@ def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
-    st.header("🔍 Stell deine Fragen")
+    st.header("🔍 Wie können wir dir weiterhelfen?")
 
     generation_config = {
         "temperature": 0.2,
-        "top_p": 1,
-        "top_k": 1,
-        "max_output_tokens": 8000,
+        "top_p": 0.9,
+        "top_k": 20,
+        "max_output_tokens": 6000,
     }
 
     if "vectorstore" not in st.session_state:
@@ -92,7 +92,7 @@ def main():
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
@@ -103,7 +103,7 @@ def main():
         st.image("Logibot.webp", width=100)
 
     with col2:
-        query_input = st.text_input("Frag Körber", value="")
+        query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
