@@ -25,7 +25,7 @@ def get_vector_store(text_chunks):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein hilfreicher Assistent, der Fragen basierend auf dem folgenden Kontext beantwortet und diese strukturiert ausgibt. Sowie ein Experte für Logistiksysteme ist:
+    Du bist ein hilfreicher Assistent (Experte für verarbeitung von Homepagedaten, sowie Logistik und HR Experte), der Fragen basierend auf dem folgenden Kontext beantwortet und diese strukturiert ausgibt sowie 3 Beispiele wenn möglich mit ausgibt:
 
     Kontext: {context}\n
     Frage: {question}\n
