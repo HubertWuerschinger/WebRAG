@@ -48,6 +48,11 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
+# 🗺️ Standortrelevanz prüfen
+def is_location_related(keywords):
+    location_keywords = ["standort", "adresse", "büro", "niederlassung", "lage", "standorte", "filiale"]
+    return any(keyword.lower() in location_keywords for keyword in keywords)
+
 # 🔎 Vektorspeicher mit Gemini durchsuchen
 def search_vectorstore_with_gemini(vectorstore, model, query, keywords, k=5):
     combined_query = f"{query} {' '.join(keywords)}"
@@ -119,23 +124,26 @@ def main():
             # 1️⃣ Schlagwörter extrahieren
             keywords = extract_keywords_with_llm(model, query_input)
 
-            # 2️⃣ Vektordatenbank durchsuchen
-            context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
+            # 2️⃣ Prüfen, ob Standortrelevanz besteht
+            if is_location_related(keywords):
+                # 🔎 Vektordatenbank durchsuchen
+                context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
 
-            # 3️⃣ Adresse extrahieren (nur bei Standortfragen)
-            address_info = extract_address_with_llm(model, context)
+                # 🏠 Adresse extrahieren
+                address_info = extract_address_with_llm(model, context)
 
-            # 🗺️ Karte nur bei Standortfragen anzeigen
-            if "standort" in query_input.lower() or "adresse" in query_input.lower():
+                # 🗺️ Standort auf der Karte anzeigen
                 if "Hamburg" in address_info:
                     st.session_state.location = [53.5450, 10.0290]
                 elif "Berlin" in address_info:
                     st.session_state.location = [52.5200, 13.4050]
 
                 st.session_state.address_info = address_info
-
-            # 📝 Antwort speichern
-            st.session_state.response = context
+                st.session_state.response = context
+            else:
+                # 🚫 Keine Karte, nur Textantwort
+                context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
+                st.session_state.response = context
 
     # 🗺️ Karte anzeigen, wenn Standort erkannt wurde
     if st.session_state.location:
