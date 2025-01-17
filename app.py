@@ -97,7 +97,13 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    query_input = st.text_input("Frag Körber", value="")
+    col1, col2 = st.columns([1, 5])
+
+    with col1:
+        st.image("Logibot.webp", width=100)
+
+    with col2:
+        query_input = st.text_input("Frag Körber", value="")
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
@@ -109,7 +115,12 @@ def main():
             st.success("Antwort:")
             st.write(f"**Eingabe:** {st.session_state.query}")
             st.write(result)
-            st.session_state.query = ""  # Textfeld nach Ausführung zurücksetzen
+            st.session_state.query = ""
+
+    st.markdown("### 💡 Beispielanfragen:")
+    st.markdown("- Wie viele Mitarbeiter hat Körber?")
+    st.markdown("- Welche Produkte bietet Körber im Bereich Logistik an?")
+    st.markdown("- Wo befinden sich die Standorte von Körber?")
 
 if __name__ == "__main__":
     main()
