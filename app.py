@@ -51,7 +51,7 @@ def extract_keywords(text, max_keywords=3):
 # --- Antwort generieren ---
 def get_response(context, question, model):
     prompt_template = f"""
-    Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage strukturiert basierend auf dem Kontext:
+    Du bist ein hilfsbereiter Chatbot und Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage strukturiert basierend auf dem Kontext der per jsonl zur Verfügung gestellt wurde.:
 
     Kontext: {context}\n
     Frage: {question}\n
