@@ -59,7 +59,7 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📍 Google Maps über Folium anzeigen
+# 📍 Folium-Karte anzeigen
 def show_google_map_folium(location, tooltip="Körber AG"):
     # Erstelle eine Folium-Karte mit Marker
     m = folium.Map(location=location, zoom_start=15)
