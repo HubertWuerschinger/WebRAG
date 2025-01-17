@@ -10,7 +10,7 @@ import re
 import folium
 from streamlit_folium import st_folium
 
-# 📌 API-Schlüssel laden
+# 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -48,14 +48,21 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Vektorspeicher durchsuchen
-def search_vectorstore(vectorstore, query, k=5):
-    relevant_content = vectorstore.similarity_search(query, k=k)
-    return "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+# 🔎 Gemini durchsucht die Vektordatenbank mit Schlagwörtern + Anfrage
+def search_vectorstore_with_gemini(vectorstore, model, query, keywords, k=5):
+    combined_query = f"{query} {' '.join(keywords)}"
+    prompt = f"Durchsuche die Vektordatenbank mit dieser erweiterten Anfrage:\n\n{combined_query}\n\nZeige die relevantesten Informationen."
+    try:
+        response = model.generate_content(prompt)
+        relevant_content = vectorstore.similarity_search(response.text, k=k)
+        return "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+    except Exception as e:
+        st.error(f"Fehler bei der Vektorsuche mit Gemini: {e}")
+        return ""
 
 # 🗺️ Standortinformationen extrahieren
 def extract_address_with_llm(model, text):
-    prompt = f"Extrahiere aus diesem Text die Adresse im Format 'Straße, Stadt' und liefere ergänzende Standortinformationen:\n\n{text}"
+    prompt = f"Extrahiere aus diesem Text die Adresse im Format 'Straße, Stadt':\n\n{text}"
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -92,50 +99,39 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    # Session State für Ergebnisse initialisieren
-    if "response" not in st.session_state:
-        st.session_state.response = ""
-    if "address_info" not in st.session_state:
-        st.session_state.address_info = ""
-    if "location" not in st.session_state:
-        st.session_state.location = None
-
-    # 📌 Benutzeranfrage
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
 
-    # 🔍 Benutzeranfrage verarbeiten
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
 
-            # 🔎 Vektorspeicher durchsuchen
-            context = search_vectorstore(st.session_state.vectorstore, query_input)
+            # 1️⃣ Schlagwörter extrahieren
+            keywords = extract_keywords_with_llm(model, query_input)
+            st.write(f"**Extrahierte Schlagwörter:** {', '.join(keywords)}")
 
-            # 🏠 Standortinformationen extrahieren
+            # 2️⃣ Vektordatenbank mit Gemini durchsuchen
+            context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
+
+            # 3️⃣ Adresse extrahieren (wenn vorhanden)
             address_info = extract_address_with_llm(model, context)
 
-            # 📍 Standortanzeige mit Karte
+            # 📍 Karte anzeigen, wenn Standort erkannt wurde
             if address_info:
-                st.session_state.address_info = address_info
-
-                # Dynamische Standortanzeige
                 if "Hamburg" in address_info:
-                    st.session_state.location = [53.5450, 10.0290]
+                    location = [53.5450, 10.0290]
                 elif "Berlin" in address_info:
-                    st.session_state.location = [52.5200, 13.4050]
+                    location = [52.5200, 13.4050]
+                else:
+                    location = [53.5450, 10.0290]  # Fallback
 
-                st.session_state.response = context
+                show_map_with_marker(location, tooltip=address_info)
+                st.success(f"📍 Standort: {address_info}")
 
-    # 📍 Karte anzeigen, wenn Standortinformation existiert
-    if st.session_state.location:
-        show_map_with_marker(st.session_state.location, tooltip=st.session_state.address_info)
-        st.success(f"📍 Standort: {st.session_state.address_info}")
-
-    # 📝 Ergebnis anzeigen
-    if st.session_state.response:
-        st.success("📝 Antwort:")
-        st.write(st.session_state.response)
+            # 📝 Ergebnis anzeigen
+            if context:
+                st.success("📝 Antwort:")
+                st.write(context)
 
 if __name__ == "__main__":
     main()
