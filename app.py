@@ -19,10 +19,20 @@ def load_api_keys():
         st.stop()
     return api_key
 
-# 📂 Körber-Daten laden
+# 📂 Körber-Daten laden und bereinigen
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), "title": doc["meta"].get("title", "Kein Titel")} for doc in dataset["train"]]
+    cleaned_data = []
+    for doc in dataset["train"]:
+        content = doc["completion"]
+        if content and content.strip() and content.lower() != "all rights reserved..":
+            clean_text = re.sub(r'<.*?>', '', content)  # HTML-Tags entfernen
+            cleaned_data.append({
+                "content": clean_text.strip(),
+                "url": doc["meta"].get("url", ""),
+                "title": doc["meta"].get("title", "Kein Titel")
+            })
+    return cleaned_data
 
 # 📦 Optimierter Vektorspeicher mit HNSW-Index
 def get_optimized_vector_store(text_chunks):
@@ -39,10 +49,12 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 🔎 RAG-Suche (Retrieval-Augmented Generation)
-def rag_search_with_gemini(model, vectorstore, query, k=5):
-    relevant_docs = vectorstore.similarity_search(query, k=k)
+# 🔎 Optimierte RAG-Suche
+def rag_search_with_gemini(model, vectorstore, query, keywords, k=5):
+    combined_query = f"{query} {' '.join(keywords)}"
+    relevant_docs = vectorstore.similarity_search(combined_query, k=k)
     context = "\n".join([doc.page_content for doc in relevant_docs])
+    
     prompt = f"Nutze diesen Kontext, um präzise zu antworten:\n\n{context}\n\nFrage:\n{query}\n\nAntworte kurz und präzise."
     try:
         response = model.generate_content(prompt)
@@ -51,7 +63,7 @@ def rag_search_with_gemini(model, vectorstore, query, k=5):
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
         return "Fehler bei der Antwortgenerierung."
 
-# 🗺️ Standortanfrage erkennen
+# 🏠 Standortanfrage erkennen
 def is_location_query(keywords):
     location_terms = ["standort", "adresse", "niederlassung", "büro", "filiale", "ort"]
     return any(term in keywords for term in location_terms)
@@ -66,7 +78,7 @@ def extract_location_with_gemini(model, context):
         st.error(f"Fehler bei der Adress-Extraktion: {e}")
         return ""
 
-# 🗺️ Karte anzeigen
+# 🗺️ Standortkarte anzeigen
 def show_map_with_marker(location, tooltip):
     m = folium.Map(location=location, zoom_start=14)
     folium.Marker(location=location, popup=f"<b>{tooltip}</b>", tooltip=tooltip).add_to(m)
@@ -107,17 +119,15 @@ def main():
             keywords = extract_keywords_with_llm(model, query_input)
 
             # 📊 RAG-Suche
-            response_text = rag_search_with_gemini(model, st.session_state.vectorstore, query_input)
+            response_text = rag_search_with_gemini(model, st.session_state.vectorstore, query_input, keywords)
 
-            # 🗺️ Standortanfrage prüfen
+            # 🏠 Standortanfrage prüfen
             if is_location_query(keywords):
                 address_info = extract_location_with_gemini(model, response_text)
-                
                 if "Hamburg" in address_info:
                     show_map_with_marker([53.5450, 10.0290], tooltip=address_info)
                 elif "Berlin" in address_info:
                     show_map_with_marker([52.5200, 13.4050], tooltip=address_info)
-                
                 st.success(f"📍 Standort: {address_info}")
 
             # 📝 Antwort anzeigen
