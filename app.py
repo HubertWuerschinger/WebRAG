@@ -57,6 +57,8 @@ def main():
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
         st.session_state.documents = []
+    if "query" not in st.session_state:
+        st.session_state.query = ""
 
     # --- Vektorspeicher laden ---
     if st.session_state.vectorstore is None:
@@ -68,23 +70,21 @@ def main():
             st.session_state.documents = text_chunks
 
     # --- Benutzerabfrage ---
-    query = st.text_input("Frag Körber")
+    query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
-    # --- Interaktive Buttons für "Mehr dazu" ---
-    if "more_info" not in st.session_state:
-        st.session_state.more_info = ""
+    # --- Button für direkte Anfrage ---
+    if st.button("Antwort generieren") and query_input:
+        st.session_state.query = query_input  # Speichere die Anfrage
 
-    if st.session_state.more_info:
-        query = f"Gib mir mehr dazu zu: {st.session_state.more_info}"
-
-    if st.button("Antwort generieren") and query:
+    # --- Generiere Antwort, wenn eine Anfrage existiert ---
+    if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
-            relevant_content = vectorstore.similarity_search(query, k=5)
+            relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
 
             context = "\n".join([doc.page_content for doc in relevant_content])
-            result = get_response(context, query, model)
+            result = get_response(context, st.session_state.query, model)
 
             st.success("Antwort:")
             st.write(result)
@@ -96,7 +96,8 @@ def main():
                 if matching_doc:
                     title = matching_doc["content"][:100]  # Erstes Stück Text als Vorschau
                     if st.button(f"Mehr zu: {title}", key=f"more_info_{i}"):
-                        st.session_state.more_info = title
+                        # Neue Anfrage setzen und Seite neuladen
+                        st.session_state.query = f"Gib mir mehr dazu zu: {title}"
                         st.experimental_rerun()
 
             # --- Top 3 passende URLs anzeigen ---
