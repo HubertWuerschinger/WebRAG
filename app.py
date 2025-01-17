@@ -27,30 +27,22 @@ def get_vector_store(text_chunks):
         vectorstore = FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
         return vectorstore
     except Exception as e:
-        st.warning(f"Fehler beim Erstellen des Vektorspeichers: {e}")
+        st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
+        return None
 
 # --- Erweiterte Schlagwort-Extraktion ---
 def extract_keywords(text, max_keywords=3):
-    # Relevante Berufs- und Fachbegriffe
-    domain_terms = [
-        "Ingenieur", "Maschinenbau", "Automatisierung", "Logistik", "Softwareentwicklung",
-        "IT", "Projektmanagement", "Mechatronik", "Produktion", "Innovation"
-    ]
+    domain_terms = ["Ingenieur", "Maschinenbau", "Automatisierung", "Logistik", "Softwareentwicklung",
+                    "IT", "Projektmanagement", "Mechatronik", "Produktion", "Innovation"]
 
-    # Erweiterte Stopwords-Liste
-    stopwords = [
-        "der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei",
-        "dies", "da", "stellenangebote", "ist", "ein", "eine", "im", "sowie", "mehr", "bitte", "job", "jobs"
-    ]
+    stopwords = ["der", "die", "das", "und", "in", "auf", "von", "zu", "mit", "für", "an", "bei",
+                 "dies", "da", "stellenangebote", "ist", "ein", "eine", "im", "sowie", "mehr", "bitte", "job", "jobs"]
 
-    # Nur Wörter mit mind. 3 Buchstaben, keine Stopwords
     words = re.findall(r'\b[A-ZÄÖÜa-zäöüß]{3,}\b', text)
     words_filtered = [word for word in words if word.lower() not in stopwords]
 
-    # Fachbegriffe bevorzugen
     keywords = [word for word in words_filtered if word in domain_terms]
 
-    # Wenn keine Fachbegriffe gefunden, dann häufigste Wörter nutzen
     if not keywords:
         keywords_counter = Counter(words_filtered)
         keywords = [word for word, _ in keywords_counter.most_common(max_keywords)]
@@ -71,7 +63,7 @@ def get_response(context, question, model):
         response = model.generate_content(prompt_template)
         return response.text
     except Exception as e:
-        st.warning(f"Fehler bei der Generierung: {e}")
+        st.error(f"Fehler bei der Generierung: {e}")
         return ""
 
 # --- Hauptprozess ---
@@ -89,7 +81,6 @@ def main():
         "max_output_tokens": 8000,
     }
 
-    # --- Session State initialisieren ---
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
     if "documents" not in st.session_state:
@@ -97,7 +88,6 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
-    # --- Vektorspeicher laden ---
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -106,39 +96,30 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    # --- Benutzerabfrage ---
     query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
-    # --- Button für direkte Anfrage ---
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
 
-    # --- Generiere Antwort, wenn eine Anfrage existiert ---
-    # --- Generiere Antwort, wenn eine Anfrage existiert ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
             vectorstore = st.session_state.vectorstore
             relevant_content = vectorstore.similarity_search(st.session_state.query, k=5)
-    
+
             context = "\n".join([doc.page_content for doc in relevant_content])
             result = get_response(context, st.session_state.query, model)
-    
-            # --- Schlagwörter aus Absätzen extrahieren ---
-            keywords = extract_keywords_from_paragraphs(result)
-    
+
+            keywords = extract_keywords(result)
+
             st.success("Antwort:")
-            st.write(f"**Schlagwörter:** {', '.join(keywords)}\n\n{result}")
+            st.write(result)
 
-
-            # --- Schlagwörter anzeigen ---
             st.markdown("### 📌 Relevante Themen")
-            st.write(f"**Schlagwörter:** {', '.join(keywords)}")
-
-            # --- Buttons für weitere Infos ---
             for i, keyword in enumerate(keywords):
                 if st.button(f"Mehr zu: {keyword}", key=f"more_info_{i}"):
                     st.session_state.query = f"Gib mir mehr dazu zu: {keyword}"
+                    st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
