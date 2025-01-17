@@ -10,7 +10,7 @@ import re
 import folium
 from streamlit_folium import st_folium
 
-# ⚠️ Streamlit-Konfiguration
+# ⚙️ Streamlit-Seitenkonfiguration
 st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
 
 # 🔑 API-Schlüssel laden
@@ -52,7 +52,6 @@ def get_vector_store(text_chunks):
 
 # 🔍 Schlagwort-Extraktion mit Gemini
 def extract_keywords_with_llm(model, query):
-    st.info("🔍 Extrahiere Schlagwörter...")
     prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
         response = model.generate_content(prompt)
@@ -63,35 +62,37 @@ def extract_keywords_with_llm(model, query):
         st.error(f"❌ Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
+# 🏢 Adresse mit Gemini in korrektes Format bringen
+def format_address_with_llm(model, raw_address):
+    prompt = f"Formatiere diese Adresse korrekt für Google Maps:\n\n{raw_address}"
+    try:
+        response = model.generate_content(prompt)
+        formatted_address = response.text.strip()
+        st.success(f"📍 Formatierte Adresse: {formatted_address}")
+        return formatted_address
+    except Exception as e:
+        st.error(f"❌ Fehler bei der Adressformatierung: {e}")
+        return raw_address
+
 # 📊 Vektorspeicher durchsuchen
 def search_vectorstore(vectorstore, keywords, query, k=5):
-    st.info("📊 Durchsuche Vektorspeicher...")
     combined_query = " ".join(keywords + [query])
-    try:
-        relevant_content = vectorstore.similarity_search(combined_query, k=k)
-        context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
-        urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
-        st.success("✅ Vektorspeicher erfolgreich durchsucht.")
-        return context, urls[:3]
-    except Exception as e:
-        st.error(f"❌ Fehler bei der Vektorspeicher-Suche: {e}")
-        return "", []
+    relevant_content = vectorstore.similarity_search(combined_query, k=k)
+    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
+    return context, urls[:3]
 
-# 📍 Folium-Karte anzeigen (Standard oder spezifisch)
+# 📍 Folium-Karte anzeigen
 def show_map(location=None, tooltip="Körber AG"):
-    st.info("📍 Erstelle Karte...")
     try:
-        # Standardkarte, wenn kein Standort angegeben ist
         if location is None:
-            m = folium.Map(location=[53.5511, 9.9937], zoom_start=5)  # Zentrum: Deutschland
+            m = folium.Map(location=[53.5511, 9.9937], zoom_start=5)
         else:
             m = folium.Map(location=location, zoom_start=15)
             folium.Marker(location, popup=tooltip, tooltip=tooltip).add_to(m)
-        
         st_folium(m, width=700, height=500)
-        st.success("✅ Karte angezeigt.")
     except Exception as e:
-        st.error(f"❌ Fehler bei der Kartenerstellung: {e}")
+        st.error(f"❌ Fehler bei der Kartendarstellung: {e}")
 
 # 🚀 Hauptprozess
 def main():
@@ -112,12 +113,10 @@ def main():
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
-            if documents:
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
-                text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
-                st.session_state.vectorstore = get_vector_store(text_chunks)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
+            text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
+            st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    # Eingabe und Button nebeneinander
     col1, col2 = st.columns([4, 1])
     with col1:
         query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
@@ -137,10 +136,12 @@ def main():
             st.write(f"**Eingabe:** {query_input}")
             st.write(context)
 
-            # 📍 Standortkarte aktualisieren, falls nach Standorten gefragt
+            # 🏢 Adresse formatieren und Karte aktualisieren
             if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in keywords):
-                show_map(location=[53.5450, 10.0290], tooltip="Körber AG Hamburg")
+                formatted_address = format_address_with_llm(model, "Anckelmannsplatz 1, 20537 Hamburg")
+                show_map(location=[53.5450, 10.0290], tooltip=formatted_address)
 
+            # 🔗 Relevante Links
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
