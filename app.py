@@ -92,8 +92,8 @@ def main():
     generation_config = {
         "temperature": 0.2,
         "top_p": 0.9,
-        "top_k": 20,
-        "max_output_tokens": 6000,
+        "top_k": 30,
+        "max_output_tokens": 3000,
     }
 
     # 📦 Initialisierung des Vektorspeichers
