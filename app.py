@@ -7,9 +7,8 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
-from collections import Counter
 
-# --- Körber-Daten aus der JSON-Datei laden ---
+# --- 1. Körber-Daten aus der JSON-Datei laden ---
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     documents = [{
@@ -20,7 +19,7 @@ def load_koerber_data():
     } for doc in dataset["train"]]
     return documents
 
-# --- Vektorspeicher erstellen ---
+# --- 2. Vektorspeicher erstellen ---
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -30,23 +29,38 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# --- Dynamische Schlagwort-Extraktion ---
-def extract_dynamic_keywords(query):
-    words = re.findall(r'\b[A-ZÄÖÜa-zäöüß]{3,}\b', query)
-    stopwords = ["wie", "viel", "hat", "haben", "ist", "sind", "der", "die", "das", "und",
-                 "von", "mit", "für", "bei", "zu", "im", "auf", "ein", "eine", "auch", "es"]
-    return [word.lower() for word in words if word.lower() not in stopwords]
+# --- 3. Schlagwörter mit Gemini extrahieren ---
+def extract_keywords_with_gemini(question, model):
+    prompt_template = f"""
+    Extrahiere die 3 wichtigsten Schlagwörter aus folgender Frage. Gib nur die Schlagwörter als Liste zurück:
 
-# --- Direkte Suche in den Dokumenten ---
-def search_dynamic_content(documents, query):
-    dynamic_keywords = extract_dynamic_keywords(query)
+    Frage: {question}
+    """
+    try:
+        response = model.generate_content(prompt_template)
+        keywords = re.findall(r'\b\w+\b', response.text)
+        return keywords[:3]  # Maximal 3 Schlagwörter
+    except Exception as e:
+        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
+        return []
+
+# --- 4. Dynamische Suche in den Dokumenten ---
+def search_dynamic_content_with_keywords(documents, keywords, query):
+    combined_search_terms = keywords + query.split()
     for doc in documents:
-        if any(keyword in doc["content"].lower() for keyword in dynamic_keywords):
+        content_lower = doc["content"].lower()
+        if any(term.lower() in content_lower for term in combined_search_terms):
             return doc["content"]
     return "Keine passenden Informationen gefunden."
 
-# --- Antwort generieren ---
+# --- 5. Antwort generieren ---
 def get_response(context, question, model, documents):
+    extracted_keywords = extract_keywords_with_gemini(question, model)
+    fallback_result = search_dynamic_content_with_keywords(documents, extracted_keywords, question)
+
+    if fallback_result != "Keine passenden Informationen gefunden.":
+        return f"Direkt gefunden: {fallback_result}"
+
     prompt_template = f"""
     Du bist ein Experte für Logistik, Ingenieurwesen und Personalwesen. Beantworte die folgende Frage basierend auf dem Kontext:
 
@@ -56,17 +70,13 @@ def get_response(context, question, model, documents):
     Antworte strukturiert und liefere 3 praxisnahe Beispiele.
     """
     try:
-        fallback_result = search_dynamic_content(documents, question)
-        if fallback_result != "Keine passenden Informationen gefunden.":
-            return f"Direkt gefunden: {fallback_result}"
-
         response = model.generate_content(prompt_template)
         return response.text
     except Exception as e:
         st.error(f"Fehler bei der Generierung: {e}")
         return ""
 
-# --- Hauptprozess ---
+# --- 6. Hauptprozess ---
 def main():
     load_dotenv()
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
@@ -88,6 +98,7 @@ def main():
     if "query" not in st.session_state:
         st.session_state.query = ""
 
+    # --- Vektorspeicher und Dokumente laden ---
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -96,11 +107,13 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
+    # --- Benutzerabfrage ---
     query_input = st.text_input("Frag Körber", value=st.session_state.query)
 
     if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
 
+    # --- Antwort generieren ---
     if st.session_state.query:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
