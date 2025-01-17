@@ -7,6 +7,7 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
+import urllib.parse  # Für URL-Encoding
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
@@ -47,18 +48,29 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
+# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
-    urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
+    context = "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
+    
+    # Robustere URL-Extraktion
+    urls = []
+    for doc in relevant_content:
+        meta = getattr(doc, "metadata", {})
+        url = meta.get("url", "")
+        if url:
+            urls.append(url)
+    
     return context, urls[:3]
 
 # 📍 Google Maps Integration zur Standortanzeige
 def show_google_map(location, maps_api_key):
-    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={location.replace(' ', '+')}"
-    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
+    encoded_location = urllib.parse.quote(location)
+    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={encoded_location}"
+    
+    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" '
+                f'src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
 def main():
@@ -89,15 +101,9 @@ def main():
             st.session_state.vectorstore = get_vector_store(text_chunks)
             st.session_state.documents = text_chunks
 
-    col1, col2 = st.columns([4, 1])
-
-    with col1:
-        query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
-
-    with col2:
-        generate_button = st.button("Antwort generieren")
-
-    if generate_button and query_input:
+    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+    
+    if st.button("Antwort generieren") and query_input:
         st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
