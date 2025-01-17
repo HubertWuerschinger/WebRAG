@@ -8,7 +8,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
 
-# --- 1. Umgebungsvariablen sicher laden ---
+"""
+Lädt den API-Schlüssel aus der .env-Datei, um den Zugriff auf die Gemini API zu ermöglichen.
+Beendet die Anwendung, wenn der API-Schlüssel fehlt.
+"""
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -17,7 +20,9 @@ def load_api_keys():
         st.stop()
     return api_key
 
-# --- 2. JSONL-Daten laden ---
+"""
+Lädt die Daten aus der JSONL-Datei und bereitet sie für die Suche vor.
+"""
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{
@@ -27,7 +32,9 @@ def load_koerber_data():
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
 
-# --- 3. Vektorspeicher (FAISS) erstellen ---
+"""
+Erstellt den Vektorspeicher (FAISS) aus den geladenen Textdaten.
+"""
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -36,7 +43,9 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# --- 4. Schlagwörter mit Gemini extrahieren ---
+"""
+Extrahiert relevante Schlagwörter aus dem Benutzerprompt mithilfe von Gemini.
+"""
 def extract_keywords_with_llm(model, query):
     prompt = f"Extrahiere relevante Schlagwörter aus der folgenden Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
@@ -46,13 +55,17 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# --- 5. Suche im Vektorspeicher mit Schlagwörtern ---
+"""
+Durchsucht den Vektorspeicher basierend auf den extrahierten Schlagwörtern und der ursprünglichen Anfrage.
+"""
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
     return "\n".join([getattr(doc, "page_content", getattr(doc, "content", "")) for doc in relevant_content])
 
-# --- 6. Antwort generieren ---
+"""
+Erzeugt eine strukturierte Antwort basierend auf dem gefundenen Kontext.
+"""
 def generate_response(context, question, model):
     prompt = f"Beantworte folgende Frage basierend auf diesem Kontext strukturiert mit Beispielen:\n\nKontext: {context}\nFrage: {question}"
     try:
@@ -61,7 +74,14 @@ def generate_response(context, question, model):
         st.error(f"Fehler bei der Generierung: {e}")
         return ""
 
-# --- 7. Hauptprozess ---
+"""
+Hauptfunktion zur Steuerung des Chatbots.
+1. API-Schlüssel laden
+2. Vektorspeicher initialisieren
+3. Benutzeranfrage verarbeiten
+4. Schlagwörter extrahieren und Suche ausführen
+5. Antwort generieren und anzeigen
+"""
 def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
