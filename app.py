@@ -8,15 +8,17 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import folium
 from streamlit_folium import st_folium
+import requests
 
 # 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")  # Google Maps API-Key
+    if not api_key or not maps_api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key
+    return api_key, maps_api_key
 
 # 📂 Körber-Daten laden
 def load_koerber_data():
@@ -37,6 +39,23 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
+# 📍 Geocoding: Adresse → Koordinaten
+def geocode_address(address, maps_api_key):
+    try:
+        response = requests.get(
+            f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={maps_api_key}"
+        )
+        data = response.json()
+        if data['status'] == 'OK':
+            location = data['results'][0]['geometry']['location']
+            return location['lat'], location['lng']
+        else:
+            st.warning("❗ Adresse konnte nicht gefunden werden.")
+            return None, None
+    except Exception as e:
+        st.error(f"Fehler bei der Geocodierung: {e}")
+        return None, None
+
 # 🔍 Standortsuche mit Gemini
 def search_location_with_gemini(model, query, vectorstore):
     prompt = f"""
@@ -54,18 +73,17 @@ def search_location_with_gemini(model, query, vectorstore):
         st.error(f"Fehler bei der Standortsuche: {e}")
         return ""
 
-# 🗺️ Dynamische Folium-Karte mit Gemini-Daten
-def show_dynamic_map_with_gemini(location_data):
-    m = folium.Map(location=[53.55, 10.00], zoom_start=6)
+# 🗺️ Dynamische Folium-Karte mit exakten Koordinaten
+def show_dynamic_map(location, tooltip):
+    if location is None:
+        return  # Keine Karte anzeigen, wenn keine Koordinaten vorhanden sind
 
-    if location_data:
-        addresses = location_data.split("\n")
-        for address in addresses:
-            folium.Marker(
-                location=[53.55, 10.00],  # Dummy-Koordinaten (könnten durch Geocoding ersetzt werden)
-                popup=f"<b>{address}</b>",
-                tooltip=address
-            ).add_to(m)
+    m = folium.Map(location=location, zoom_start=14)
+    folium.Marker(
+        location=location,
+        popup=f"<b>{tooltip}</b>",
+        tooltip=tooltip
+    ).add_to(m)
 
     st_folium(m, width=700, height=500)
 
@@ -74,7 +92,7 @@ def main():
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
-    api_key = load_api_keys()
+    api_key, maps_api_key = load_api_keys()
     genai.configure(api_key=api_key)
 
     generation_config = {
@@ -92,8 +110,9 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    if "location_data" not in st.session_state:
-        st.session_state.location_data = ""
+    if "last_location" not in st.session_state:
+        st.session_state.last_location = None
+        st.session_state.last_tooltip = ""
 
     # 📌 Benutzeranfrage
     col1, col2 = st.columns([4, 1])
@@ -103,21 +122,24 @@ def main():
         generate_button = st.button("Antwort generieren")
 
     # 🗺️ Karte anzeigen, wenn Daten vorhanden sind
-    if st.session_state.location_data:
-        show_dynamic_map_with_gemini(st.session_state.location_data)
-    else:
-        # Standardkarte ohne Marker
-        show_dynamic_map_with_gemini("")
+    if st.session_state.last_location:
+        show_dynamic_map(st.session_state.last_location, st.session_state.last_tooltip)
 
     # 🔍 Anfrage bearbeiten
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            location_info = search_location_with_gemini(model, query_input, st.session_state.vectorstore)
+            address = search_location_with_gemini(model, query_input, st.session_state.vectorstore)
 
-            if location_info:
-                st.session_state.location_data = location_info
-                st.success("📍 Standort gefunden und Karte aktualisiert!")
+            if address:
+                lat, lng = geocode_address(address, maps_api_key)
+                if lat and lng:
+                    st.session_state.last_location = [lat, lng]
+                    st.session_state.last_tooltip = address
+                    st.success(f"📍 Standort gefunden: {address}")
+                    show_dynamic_map([lat, lng], address)
+                else:
+                    st.warning("⚠️ Standort konnte nicht auf der Karte angezeigt werden.")
             else:
                 st.warning("⚠️ Kein Standort gefunden. Bitte präzisiere deine Anfrage.")
 
