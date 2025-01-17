@@ -48,14 +48,14 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsuche Vektordatenbank nach der Benutzeranfrage
+# 📊 Vektorspeicher durchsuchen
 def search_vectorstore(vectorstore, query, k=5):
     relevant_content = vectorstore.similarity_search(query, k=k)
     return "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
 
-# 🗺️ Extrahiere Standortinformationen aus der Antwort
+# 🗺️ Standortinformationen extrahieren
 def extract_address_with_llm(model, text):
-    prompt = f"Extrahiere aus diesem Text die Adresse im Format 'Straße, Stadt':\n\n{text}"
+    prompt = f"Extrahiere aus diesem Text die Adresse im Format 'Straße, Stadt' und liefere ergänzende Standortinformationen:\n\n{text}"
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -63,7 +63,7 @@ def extract_address_with_llm(model, text):
         st.error(f"Fehler bei der Adress-Extraktion: {e}")
         return ""
 
-# 🗺️ Zeige Standort auf der Karte an
+# 🗺️ Standortkarte anzeigen
 def show_map_with_marker(location, tooltip):
     m = folium.Map(location=location, zoom_start=14)
     folium.Marker(location=location, popup=f"<b>{tooltip}</b>", tooltip=tooltip).add_to(m)
@@ -96,7 +96,7 @@ def main():
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
 
-    # 🔍 Verarbeite Benutzeranfrage
+    # 🔍 Benutzeranfrage verarbeiten
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
@@ -105,20 +105,25 @@ def main():
             context = search_vectorstore(st.session_state.vectorstore, query_input)
 
             # 🏠 Standortinformationen extrahieren
-            address = extract_address_with_llm(model, context)
+            address_info = extract_address_with_llm(model, context)
 
-            # 📍 Standortanzeige, falls Adresse erkannt
-            if address:
-                st.success(f"📍 Gefundene Adresse: {address}")
-                # Adresse geokodieren (hier Beispielkoordinaten für Hamburg)
-                if "Hamburg" in address:
-                    show_map_with_marker([53.5450, 10.0290], tooltip=address)
-                elif "Berlin" in address:
-                    show_map_with_marker([52.5200, 13.4050], tooltip=address)
+            # 📍 Standortanzeige
+            if address_info:
+                st.success(f"📍 Gefundene Adresse und Informationen: {address_info}")
+
+                # Dynamische Standortanzeige auf der Karte
+                if "Hamburg" in address_info:
+                    show_map_with_marker([53.5450, 10.0290], tooltip=address_info)
+                elif "Berlin" in address_info:
+                    show_map_with_marker([52.5200, 13.4050], tooltip=address_info)
+
+                # 🔗 Relevante Links ausgeben
+                st.markdown("### 🔗 **Weitere Informationen:**")
+                st.write(context)
             else:
-                st.info("📝 Keine Standortinformationen gefunden.")
+                st.info("📝 Keine standortbezogenen Informationen gefunden.")
 
-            # 📝 Antwort ausgeben
+            # 📝 Antwort anzeigen
             st.success("Antwort:")
             st.write(f"**Eingabe:** {query_input}")
             st.write(context)
