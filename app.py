@@ -29,6 +29,21 @@ def load_koerber_data():
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
 
+def clean_html_content(text):
+    clean_text = re.sub(r'<.*?>', '', text)  # Entfernt HTML-Tags
+    clean_text = re.sub(r'\n+', '\n', clean_text)  # Doppelte Zeilenumbrüche entfernen
+    return clean_text.strip()
+    
+def search_vectorstore_with_limit(vectorstore, query, k=3):
+    results = vectorstore.similarity_search(query, k=k)
+    return results[:k]  # Nur die Top-k Treffer zurückgeben
+
+
+def is_location_query(keywords):
+    location_keywords = ["standort", "adresse", "niederlassung", "filiale"]
+    return any(keyword.lower() in location_keywords for keyword in keywords)
+
+
 # 📦 Vektorspeicher erstellen
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -93,7 +108,7 @@ def main():
         "temperature": 0.2,
         "top_p": 0.9,
         "top_k": 30,
-        "max_output_tokens": 30,
+        "max_output_tokens": 3000,
     }
 
     # 📦 Initialisierung des Vektorspeichers
@@ -117,33 +132,36 @@ def main():
     generate_button = st.button("Antwort generieren")
 
     # 🔍 Verarbeitung der Anfrage
+    # 🔍 Verarbeitung der Anfrage mit optimierter Ausgabe
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-
+    
             # 1️⃣ Schlagwörter extrahieren
             keywords = extract_keywords_with_llm(model, query_input)
-
-            # 2️⃣ Prüfen, ob Standortrelevanz besteht
-            if is_location_related(keywords):
-                # 🔎 Vektordatenbank durchsuchen
-                context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
-
+    
+            # 2️⃣ Standortanfrage prüfen
+            if is_location_query(keywords):
+                context = search_vectorstore_with_limit(st.session_state.vectorstore, query_input)
+                cleaned_context = clean_html_content(context)
+    
                 # 🏠 Adresse extrahieren
-                address_info = extract_address_with_llm(model, context)
-
-                # 🗺️ Standort auf der Karte anzeigen
+                address_info = extract_address_with_llm(model, cleaned_context)
+    
                 if "Hamburg" in address_info:
-                    st.session_state.location = [53.5450, 10.0290]
+                    show_map_with_marker([53.5450, 10.0290], tooltip=address_info)
                 elif "Berlin" in address_info:
-                    st.session_state.location = [52.5200, 13.4050]
-
-                st.session_state.address_info = address_info
-                st.session_state.response = context
+                    show_map_with_marker([52.5200, 13.4050], tooltip=address_info)
+    
+                st.success(f"📍 Standort: {address_info}")
+                st.write(cleaned_context)
+    
             else:
-                # 🚫 Keine Karte, nur Textantwort
-                context = search_vectorstore_with_gemini(st.session_state.vectorstore, model, query_input, keywords)
-                st.session_state.response = context
+                # 📄 Allgemeine Information anzeigen
+                context = search_vectorstore_with_limit(st.session_state.vectorstore, query_input)
+                cleaned_context = clean_html_content(context)
+                st.success("📝 Antwort:")
+                st.write(cleaned_context)
 
     # 🗺️ Karte anzeigen, wenn Standort erkannt wurde
     if st.session_state.location:
