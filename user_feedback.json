@@ -1,0 +1,25 @@
+{
+  "feedback": [
+    {
+      "query": "Wie viele Mitarbeiter hat Körber?",
+      "response": "Das Körber-Geschäftsfeld Supply Chain ist Teil des internationalen Technologiekonzerns Körber mit rund 12.000 Mitarbeitern und mehr als 100 Standorten weltweit.",
+      "feedback": "👍",
+      "comment": "Die Antwort war genau richtig und hilfreich.",
+      "timestamp": "2025-01-18T10:30:45"
+    },
+    {
+      "query": "Wo befindet sich der Hauptsitz von Körber?",
+      "response": "Der Hauptsitz der Körber AG befindet sich am Anckelmannsplatz 1, 20537 Hamburg.",
+      "feedback": "👎",
+      "comment": "Die Adresse stimmt, aber ich hätte gerne mehr Details zum Hauptsitz.",
+      "timestamp": "2025-01-18T10:35:12"
+    },
+    {
+      "query": "Welche Produkte bietet Körber im Bereich Logistik an?",
+      "response": "Körber bietet umfassende Lösungen im Bereich Logistik an, darunter Lagerautomatisierung und Supply-Chain-Software.",
+      "feedback": "👍",
+      "comment": "Gute Übersicht, aber ein Link zu weiteren Infos wäre hilfreich.",
+      "timestamp": "2025-01-18T10:40:27"
+    }
+  ]
+}
