@@ -88,29 +88,39 @@ def extract_keywords_with_llm(model, query):
         return []
 
 # 💬 Feedback auf GitHub speichern mit erweiterter Fehlerüberprüfung
+# 💬 Feedback auf GitHub speichern mit SHA-Aktualisierung
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
         repo = g.get_repo(github_repo)
         file_path = "user_feedback.jsonl"
 
-        try:
-            contents = repo.get_contents(file_path)
-            existing_content = contents.decoded_content.decode()
-            updated_content = existing_content + json.dumps(feedback_entry) + "\n"
+        # Aktuellsten SHA-Wert holen
+        contents = repo.get_contents(file_path)
+        sha = contents.sha  # Aktueller SHA-Wert
+        existing_content = contents.decoded_content.decode()
 
-            # Speichern testen
-            repo.update_file(contents.path, "Feedback aktualisiert", updated_content, contents.sha)
-            st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
-        
-        except Exception as e:
-            # Datei erstellen, falls sie nicht existiert
+        # Feedback anhängen
+        updated_content = existing_content + json.dumps(feedback_entry) + "\n"
+
+        # Datei mit aktuellem SHA aktualisieren
+        repo.update_file(
+            path=contents.path,
+            message="Feedback aktualisiert",
+            content=updated_content,
+            sha=sha  # Immer den aktuellen SHA nutzen
+        )
+        st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
+
+    except Exception as e:
+        # Falls die Datei nicht existiert, wird sie erstellt
+        if "404" in str(e):
             repo.create_file(file_path, "Feedback-Datei erstellt", json.dumps(feedback_entry) + "\n")
             st.success("📝 Feedback-Datei wurde neu erstellt und Feedback gespeichert!")
-        
-    except Exception as e:
-        st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
-        st.exception(e)  # Zeigt den vollständigen Fehler
+        else:
+            st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
+            st.exception(e)
+
 
 
 # 💬 Feedback speichern
