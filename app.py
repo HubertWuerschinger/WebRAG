@@ -30,14 +30,30 @@ def load_koerber_data():
              "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
             for doc in dataset["train"]]
 
-# 📦 Vektorspeicher erstellen
-def get_vector_store(text_chunks):
+# 📦 Vektorspeicher erstellen (inkl. Feedback)
+def get_vector_store(text_chunks, github_token, github_repo):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        return FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
+        # Feedback von GitHub laden und integrieren
+        feedback_data = load_feedback_from_github(github_token, github_repo)
+        feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
+        combined_chunks = text_chunks + feedback_chunks
+
+        return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
     except Exception as e:
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
+
+# 📥 Feedback von GitHub laden
+def load_feedback_from_github(github_token, github_repo):
+    try:
+        g = Github(github_token)
+        repo = g.get_repo(github_repo)
+        contents = repo.get_contents("user_feedback.jsonl")
+        feedback_data = contents.decoded_content.decode().splitlines()
+        return [json.loads(entry) for entry in feedback_data]
+    except Exception:
+        return []
 
 # 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
@@ -62,14 +78,13 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
             updated_content = existing_content + json.dumps(feedback_entry) + "\n"
             repo.update_file(contents.path, "Feedback aktualisiert", updated_content, contents.sha)
         except Exception:
-            # Falls die Datei nicht existiert, wird sie erstellt
             repo.create_file(file_path, "Feedback-Datei erstellt", json.dumps(feedback_entry) + "\n")
         
         st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
     except Exception as e:
         st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
-# 💬 Feedback lokal und auf GitHub speichern
+# 💬 Feedback speichern
 def save_feedback(query, response, feedback_type, comment, github_token, github_repo):
     feedback_entry = {
         "query": query,
@@ -79,26 +94,16 @@ def save_feedback(query, response, feedback_type, comment, github_token, github_
         "timestamp": datetime.datetime.now().isoformat()
     }
 
-    with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
-        file.write(json.dumps(feedback_entry) + "\n")
-
     save_feedback_to_github(github_token, github_repo, feedback_entry)
 
 # 📊 Letzte Feedback-Einträge anzeigen
-def show_last_feedback_entries():
-    try:
-        g = Github(os.getenv("GITHUB_TOKEN"))
-        repo = g.get_repo(os.getenv("GITHUB_REPO"))
-        contents = repo.get_contents("user_feedback.jsonl")
-        feedback_data = contents.decoded_content.decode().splitlines()[-3:]
+def show_last_feedback_entries(github_token, github_repo):
+    feedback_data = load_feedback_from_github(github_token, github_repo)[-3:]
+    st.markdown("### 📄 **Letzte Feedback-Einträge:**")
+    for entry in feedback_data:
+        st.json(entry)
 
-        st.markdown("### 📄 **Letzte Feedback-Einträge:**")
-        for entry in feedback_data:
-            st.json(json.loads(entry))
-    except Exception as e:
-        st.error(f"❌ Fehler beim Laden der GitHub-Daten: {e}")
-
-# 📝 Antwort generieren
+# 📝 Antwort generieren mit Feedback
 def generate_response_with_feedback(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
@@ -130,7 +135,7 @@ def main():
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
-            st.session_state.vectorstore = get_vector_store(text_chunks)
+            st.session_state.vectorstore = get_vector_store(text_chunks, github_token, github_repo)
 
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
@@ -143,7 +148,7 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
+            feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -151,9 +156,10 @@ def main():
                     save_feedback(query_input, result, "👍", feedback_comment, github_token, github_repo)
             with col2:
                 if st.button("👎 Antwort verbessern"):
-                    save_feedback(query_input, feedback_comment, "👎", feedback_comment, github_token, github_repo)
+                    if feedback_comment.strip():
+                        save_feedback(query_input, feedback_comment, "👎", feedback_comment, github_token, github_repo)
 
-            show_last_feedback_entries()
+            show_last_feedback_entries(github_token, github_repo)
 
 if __name__ == "__main__":
     main()
