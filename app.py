@@ -52,13 +52,15 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
         "comment": comment,
         "timestamp": datetime.datetime.now().isoformat()
     }
-    with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
-        file.write(json.dumps(feedback_entry) + "\n")
-
-    if check_feedback_saved(query, response):
-        st.success("✅ Feedback wurde erfolgreich gespeichert!")
-    else:
-        st.error("❌ Fehler beim Speichern des Feedbacks!")
+    try:
+        with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
+            file.write(json.dumps(feedback_entry, ensure_ascii=False) + "\n")
+        if check_feedback_saved(query, response):
+            st.success("✅ Feedback wurde erfolgreich gespeichert!")
+        else:
+            st.error("❌ Fehler beim Speichern des Feedbacks!")
+    except Exception as e:
+        st.error(f"❌ Fehler beim Speichern des Feedbacks: {e}")
 
 # ✅ Überprüfen, ob Feedback gespeichert wurde
 def check_feedback_saved(query, response):
@@ -66,9 +68,12 @@ def check_feedback_saved(query, response):
         return False
     with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
         for line in file:
-            entry = json.loads(line)
-            if entry["query"] == query and entry["response"] == response:
-                return True
+            try:
+                entry = json.loads(line)
+                if entry["query"] == query and entry["response"] == response:
+                    return True
+            except json.JSONDecodeError:
+                continue
     return False
 
 # 📥 Feedback-Kommentare laden
@@ -77,9 +82,12 @@ def load_feedback_comments(query):
     if os.path.exists("user_feedback.jsonl"):
         with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
             for line in file:
-                entry = json.loads(line)
-                if entry["query"].lower() == query.lower() and entry["feedback"] == "👎":
-                    comments.append(entry["comment"])
+                try:
+                    entry = json.loads(line)
+                    if entry["query"].lower() == query.lower() and entry["feedback"] == "👎":
+                        comments.append(entry["comment"])
+                except json.JSONDecodeError:
+                    st.warning("⚠️ Ungültiger Eintrag wurde übersprungen.")
     return comments
 
 # 📝 Antwort generieren und Feedback berücksichtigen
