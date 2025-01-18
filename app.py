@@ -33,36 +33,57 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 📥 Verbesserte Antworten speichern
-def save_corrected_answer(query, corrected_answer):
+# 🔍 Schlagwörter extrahieren
+def extract_keywords_with_llm(model, query):
+    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
+    try:
+        response = model.generate_content(prompt)
+        return re.findall(r'\b\w{3,}\b', response.text)
+    except Exception as e:
+        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
+        return []
+
+# 💬 Feedback speichern in JSONL
+def save_feedback_jsonl(query, response, feedback_type, comment):
     feedback_entry = {
         "query": query,
-        "corrected_answer": corrected_answer,
+        "response": response,
+        "feedback": feedback_type,
+        "comment": comment,
         "timestamp": datetime.datetime.now().isoformat()
     }
-    with open("corrected_answers.jsonl", "a", encoding="utf-8") as file:
+    with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
-    st.success("✅ Die verbesserte Antwort wurde gespeichert!")
 
-# 🔎 Prüfen, ob es bereits eine verbesserte Antwort gibt
-def load_corrected_answer(query):
-    if os.path.exists("corrected_answers.jsonl"):
-        with open("corrected_answers.jsonl", "r", encoding="utf-8") as file:
+# 💡 Korrigierte Antworten speichern
+def save_correct_answer(query, correct_answer):
+    correction_entry = {
+        "query": query,
+        "correct_answer": correct_answer,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+    with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
+        file.write(json.dumps(correction_entry) + "\n")
+
+# 🔍 Prüfen, ob es eine gespeicherte richtige Antwort gibt
+def check_for_correction(query):
+    if os.path.exists("user_feedback.jsonl"):
+        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
             for line in file:
                 entry = json.loads(line)
-                if entry["query"].lower() == query.lower():
-                    return entry["corrected_answer"]
+                if entry.get("query", "").lower() == query.lower() and "correct_answer" in entry:
+                    return entry["correct_answer"]
     return None
 
-# 📝 Antwort generieren und verbesserte Antworten berücksichtigen
+# 📝 Antwort generieren und Feedback berücksichtigen
 def generate_response_with_feedback(vectorstore, query, model, k=5):
-    corrected_answer = load_corrected_answer(query)
-    
-    if corrected_answer:
-        st.info("🔄 Diese Antwort basiert auf einer vorherigen Korrektur.")
-        return corrected_answer
+    # Prüfen, ob es eine gespeicherte Korrektur gibt
+    correction = check_for_correction(query)
+    if correction:
+        st.info("✅ Korrigierte Antwort aus vorherigem Feedback wurde verwendet.")
+        return correction
 
-    # Standardantwort generieren, wenn keine Korrektur vorliegt
+    # Falls keine Korrektur vorhanden, Standard-RAG-Prozess
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
     context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
@@ -73,6 +94,7 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
 
     Antworte strukturiert und präzise.
     """
+
     try:
         response = model.generate_content(prompt_template)
         return response.text
@@ -105,15 +127,19 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            # Feedbackbereich
-            feedback_expander = st.expander("🛠️ Antwort verbessern")
-            with feedback_expander:
-                corrected_answer_input = st.text_area("Korrigiere die Antwort hier:")
-                if st.button("💾 Verbesserte Antwort speichern"):
-                    if corrected_answer_input:
-                        save_corrected_answer(query_input, corrected_answer_input)
+            feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("👍 Antwort war hilfreich"):
+                    save_feedback_jsonl(query_input, result, "👍", feedback_comment)
+            with col2:
+                if st.button("👎 Antwort verbessern"):
+                    if feedback_comment.strip():
+                        save_correct_answer(query_input, feedback_comment)
+                        st.success("✅ Korrekte Antwort gespeichert!")
                     else:
-                        st.warning("⚠️ Bitte gib eine korrekte Antwort ein.")
+                        st.warning("⚠️ Bitte eine korrekte Antwort eingeben.")
 
 if __name__ == "__main__":
     main()
