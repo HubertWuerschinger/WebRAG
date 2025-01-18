@@ -43,14 +43,6 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Vektorspeicher durchsuchen
-def search_vectorstore(vectorstore, keywords, query, k=5):
-    combined_query = " ".join(keywords + [query])
-    relevant_content = vectorstore.similarity_search(combined_query, k=k)
-    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
-    urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
-    return context, urls[:3]
-
 # 💬 Feedback speichern in JSONL
 def save_feedback_jsonl(query, response, feedback_type, comment):
     feedback_entry = {
@@ -63,11 +55,21 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
 
-    # 📂 Überprüfung, ob Feedback gespeichert wurde
     if check_feedback_saved(query, response):
-        st.success("✅ Feedback erfolgreich gespeichert!")
+        st.success("✅ Feedback wurde erfolgreich gespeichert!")
     else:
         st.error("❌ Fehler beim Speichern des Feedbacks!")
+
+# ✅ Überprüfen, ob Feedback gespeichert wurde
+def check_feedback_saved(query, response):
+    if not os.path.exists("user_feedback.jsonl"):
+        return False
+    with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
+        for line in file:
+            entry = json.loads(line)
+            if entry["query"] == query and entry["response"] == response:
+                return True
+    return False
 
 # 📥 Feedback-Kommentare laden
 def load_feedback_comments(query):
@@ -80,21 +82,11 @@ def load_feedback_comments(query):
                     comments.append(entry["comment"])
     return comments
 
-# ✅ Überprüfung, ob Feedback gespeichert wurde
-def check_feedback_saved(query, response):
-    if not os.path.exists("user_feedback.jsonl"):
-        return False
-    with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
-        for line in file:
-            entry = json.loads(line)
-            if entry["query"] == query and entry["response"] == response:
-                return True
-    return False
-
 # 📝 Antwort generieren und Feedback berücksichtigen
 def generate_response_with_feedback(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
-    context, urls = search_vectorstore(vectorstore, keywords, query, k)
+    relevant_content = vectorstore.similarity_search(query, k=k)
+    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
 
     feedback_comments = load_feedback_comments(query)
     feedback_context = "\n".join([f"- {comment}" for comment in feedback_comments])
@@ -109,15 +101,14 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
 
     try:
         response = model.generate_content(prompt_template)
-        # ✅ Überprüfen, ob Feedback verwendet wurde
         if feedback_comments:
             st.info("🔍 Vorheriges Feedback wurde bei der Antwort berücksichtigt.")
         else:
             st.warning("⚠️ Kein vorheriges Feedback gefunden.")
-        return response.text, urls
+        return response.text
     except Exception as e:
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
-        return "Fehler bei der Antwortgenerierung.", []
+        return "Fehler bei der Antwortgenerierung."
 
 # 🚀 Hauptprozess
 def main():
@@ -125,13 +116,6 @@ def main():
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
-
-    generation_config = {
-        "temperature": 0.2,
-        "top_p": 0.9,
-        "top_k": 20,
-        "max_output_tokens": 6000,
-    }
 
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
@@ -145,8 +129,8 @@ def main():
 
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
-            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            result, urls = generate_response_with_feedback(st.session_state.vectorstore, query_input, model)
+            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
+            result = generate_response_with_feedback(st.session_state.vectorstore, query_input, model)
 
             st.success("📝 Antwort:")
             st.write(result)
