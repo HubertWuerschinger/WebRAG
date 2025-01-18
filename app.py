@@ -44,20 +44,20 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
     }
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
-    st.session_state["feedback_saved"] = True
+
+    # Feedback auch temporär im Session State speichern
+    if "recent_feedback" not in st.session_state:
+        st.session_state["recent_feedback"] = []
+    st.session_state["recent_feedback"].append(feedback_entry)
 
 # 📊 Letzte Feedback-Einträge anzeigen
-def show_last_feedback_entries(n):
-    if os.path.exists("user_feedback.jsonl"):
-        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
-            lines = file.readlines()[-n:]  # Letzten n Einträge lesen
-            if lines:
-                st.markdown("### 📄 **Letzte Feedback-Einträge:**")
-                for line in lines:
-                    entry = json.loads(line)
-                    st.json(entry)
-            else:
-                st.info("❗️ Noch kein Feedback vorhanden.")
+def show_last_feedback_entries():
+    st.markdown("### 📄 **Letzte Feedback-Einträge:**")
+    if "recent_feedback" in st.session_state and st.session_state["recent_feedback"]:
+        for entry in st.session_state["recent_feedback"][-3:]:  # Letzte 3 Einträge anzeigen
+            st.json(entry)
+    else:
+        st.info("❗️ Noch kein Feedback vorhanden.")
 
 # 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
@@ -104,15 +104,13 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    if "feedback_saved" not in st.session_state:
-        st.session_state.feedback_saved = False
+    if "recent_feedback" not in st.session_state:
+        st.session_state["recent_feedback"] = []
 
-    # Eingabefeld und Button
-    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value=st.session_state.get("query_input", ""))
+    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
 
     if generate_button and query_input:
-        st.session_state["query_input"] = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
             result = generate_response_with_feedback(st.session_state.vectorstore, query_input, model)
@@ -120,25 +118,23 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):")
+            feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
 
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
                     save_feedback_jsonl(query_input, result, "👍", feedback_comment)
-                    st.success("✅ Feedback wurde gespeichert!")
+                    st.success("✅ Feedback gespeichert!")
             with col2:
                 if st.button("👎 Antwort verbessern"):
                     if feedback_comment.strip():
                         save_feedback_jsonl(query_input, feedback_comment, "👎", feedback_comment)
-                        st.success("✅ Korrekte Antwort gespeichert!")
+                        st.success("✅ Verbesserte Antwort gespeichert!")
                     else:
                         st.warning("⚠️ Bitte eine korrekte Antwort eingeben.")
 
-    # Letzte Feedback-Einträge anzeigen
-    if st.session_state.feedback_saved:
-        show_last_feedback_entries(3)
-        st.session_state.feedback_saved = False
+            # Direkt nach Feedback die letzten Einträge anzeigen
+            show_last_feedback_entries()
 
 if __name__ == "__main__":
     main()
