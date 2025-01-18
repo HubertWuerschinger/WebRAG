@@ -22,6 +22,28 @@ def load_api_keys():
         st.error("API- oder GitHub-Schlüssel fehlen. Bitte die .env-Datei prüfen.")
         st.stop()
     return api_key, github_token, github_repo
+    
+# ✅ GitHub-Zugriffsprüfung
+def check_github_access(github_token, github_repo):
+    """
+    Überprüft den Zugriff auf das GitHub-Repository und die Schreibrechte.
+    """
+    try:
+        g = Github(github_token)
+        repo = g.get_repo(github_repo)
+        
+        # Test: Repository Informationen abrufen
+        st.success(f"✅ Verbindung zu {github_repo} erfolgreich!")
+
+        # Test: Schreibrechte prüfen durch temporäre Datei
+        test_file_path = "test_access.txt"
+        repo.create_file(test_file_path, "Testzugriff", "Dies ist ein Test.", branch="main")
+        repo.delete_file(test_file_path, "Testzugriff gelöscht", repo.get_contents(test_file_path).sha, branch="main")
+        st.success("📝 Schreibrechte erfolgreich getestet!")
+
+    except Exception as e:
+        st.error(f"❌ GitHub-Zugriffsfehler: {e}")
+        st.stop()
 
 # 📂 Körber-Daten laden
 def load_koerber_data():
@@ -127,8 +149,12 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
 def main():
     api_key, github_token, github_repo = load_api_keys()
     genai.configure(api_key=api_key)
+
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
+
+    # 🔍 GitHub-Zugriff prüfen
+    check_github_access(github_token, github_repo)
 
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
