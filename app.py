@@ -33,9 +33,9 @@ def check_github_access(github_token, github_repo):
         # Schreibrechte testen
         test_file_path = "test_access.txt"
         repo.create_file(test_file_path, "Testzugriff", "Dies ist ein Test.", branch="main")
-        repo.delete_file(test_file_path, "Testzugriff gelöscht", repo.get_contents(test_file_path).sha, branch="main")
+        test_file = repo.get_contents(test_file_path)
+        repo.delete_file(test_file.path, "Testzugriff gelöscht", test_file.sha, branch="main")
         st.success("📝 Schreibrechte erfolgreich getestet!")
-
     except Exception as e:
         st.error(f"❌ GitHub-Zugriffsfehler: {e}")
         st.stop()
@@ -46,23 +46,6 @@ def load_koerber_data():
     return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), 
              "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
             for doc in dataset["train"]]
-
-# 📦 Vektorspeicher erstellen
-def get_vector_store(text_chunks, github_token, github_repo):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    try:
-        feedback_data = load_feedback_from_github(github_token, github_repo)
-        feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
-        combined_chunks = text_chunks + feedback_chunks
-
-        vectorstore = FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
-        if vectorstore is None:
-            st.error("❌ Vektorspeicher konnte nicht erstellt werden.")
-        return vectorstore
-
-    except Exception as e:
-        st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
-        return None
 
 # 📥 Feedback von GitHub laden
 def load_feedback_from_github(github_token, github_repo):
@@ -75,6 +58,19 @@ def load_feedback_from_github(github_token, github_repo):
     except Exception:
         return []
 
+# 📦 Vektorspeicher erstellen
+def get_vector_store(text_chunks, github_token, github_repo):
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    try:
+        feedback_data = load_feedback_from_github(github_token, github_repo)
+        feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
+        combined_chunks = text_chunks + feedback_chunks
+
+        return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
+    except Exception as e:
+        st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
+        return None
+
 # 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
     prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
@@ -85,8 +81,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 💬 Feedback auf GitHub speichern mit SHA
-# 💬 Feedback auf GitHub speichern mit erweiterter Fehlerbehandlung
+# 💬 Feedback auf GitHub speichern mit SHA-Schutz
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
@@ -94,33 +89,15 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
         file_path = "user_feedback.jsonl"
 
         contents = repo.get_contents(file_path)
-        sha = contents.sha  # SHA zur Vermeidung von Race Conditions prüfen
+        sha = contents.sha
         existing_content = contents.decoded_content.decode()
-
         updated_content = existing_content + json.dumps(feedback_entry) + "\n"
 
-        # SHA erneut prüfen vor dem Speichern
-        latest_contents = repo.get_contents(file_path)
-        if sha != latest_contents.sha:
-            st.error("⚠️ Die Datei wurde zwischenzeitlich geändert. Bitte erneut versuchen.")
-            return
-
-        repo.update_file(
-            path=contents.path,
-            message="Feedback aktualisiert",
-            content=updated_content,
-            sha=sha
-        )
+        repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
         st.success("✅ Feedback wurde sicher auf GitHub gespeichert!")
 
     except Exception as e:
-        if "403" in str(e):
-            st.error("❌ Keine Schreibrechte im Repository.")
-        elif "409" in str(e):
-            st.error("❌ SHA-Konflikt. Bitte Feedback erneut senden.")
-        else:
-            st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
-
+        st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
 # 📊 Letzte Feedback-Einträge anzeigen
 def show_last_feedback_entries(github_token, github_repo):
@@ -182,11 +159,14 @@ def main():
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
-                    save_feedback(query_input, result, "👍", feedback_comment, github_token, github_repo)
+                    save_feedback_to_github(github_token, github_repo, {
+                        "query": query_input, "response": result, "feedback": "👍", "comment": feedback_comment, "timestamp": datetime.datetime.now().isoformat()
+                    })
             with col2:
                 if st.button("👎 Antwort verbessern"):
-                    if feedback_comment.strip():
-                        save_feedback(query_input, feedback_comment, "👎", feedback_comment, github_token, github_repo)
+                    save_feedback_to_github(github_token, github_repo, {
+                        "query": query_input, "response": feedback_comment, "feedback": "👎", "comment": feedback_comment, "timestamp": datetime.datetime.now().isoformat()
+                    })
 
             show_last_feedback_entries(github_token, github_repo)
 
