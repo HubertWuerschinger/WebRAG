@@ -75,20 +75,47 @@ def extract_keywords_with_llm(model, query):
 
 # 7️⃣ 💬 Feedback auf GitHub speichern (SHA-Schutz)
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
+    """
+    Speichert das Feedback im JSONL-Format auf GitHub.
+
+    Args:
+        github_token (str): GitHub-Zugriffstoken.
+        github_repo (str): Repository-Name.
+        feedback_entry (dict): Feedback-Daten.
+    """
     try:
         g = Github(github_token)
         repo = g.get_repo(github_repo)
         file_path = "user_feedback.jsonl"
 
+        # Feedback-Datei lesen
         contents = repo.get_contents(file_path)
         sha = contents.sha
         existing_content = contents.decoded_content.decode()
+
+        # 📝 Neues Feedback im JSONL-Format anhängen
         updated_content = existing_content + json.dumps(feedback_entry, ensure_ascii=False) + "\n"
 
+        # ✅ Datei aktualisieren
         repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
-        st.success("✅ Feedback wurde sicher auf GitHub gespeichert!")
+        st.success("✅ Feedback wurde sicher im JSONL-Format auf GitHub gespeichert!")
+
     except Exception as e:
-        st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
+        st.error(f"❌ Fehler beim Speichern des Feedbacks in GitHub: {e}")
+        
+def validate_feedback_entry(feedback_entry):
+    """
+    Validiert das Feedback-Format vor dem Speichern.
+
+    Args:
+        feedback_entry (dict): Feedback-Daten.
+
+    Returns:
+        bool: True, wenn das Format korrekt ist.
+    """
+    required_keys = ["query", "response", "feedback", "comment", "timestamp"]
+    return all(key in feedback_entry for key in required_keys)
+
 
 # 8️⃣ 📊 Letzte Feedback-Einträge anzeigen
 def show_last_feedback_entries(github_token, github_repo):
@@ -173,9 +200,7 @@ def main():
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
-    # ✅ GitHub-Zugriff und Feedback-Datei prüfen
     check_github_access(github_token, github_repo)
-    check_feedback_file_access(github_token, github_repo)  # 👈 Schreib-/Leseprüfung für Feedback-Datei
 
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
@@ -198,18 +223,40 @@ def main():
             feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):")
 
             col1, col2 = st.columns(2)
+            
+            # ✅ Feedback bei "👍 Antwort war hilfreich"
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
-                    save_feedback_to_github(github_token, github_repo, {
-                        "query": query_input, "response": result, "feedback": "👍", "comment": feedback_comment, "timestamp": datetime.datetime.now().isoformat()
-                    })
+                    feedback_entry = {
+                        "query": query_input,
+                        "response": result,
+                        "feedback": "👍",
+                        "comment": feedback_comment,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                    
+                    # ✅ Feedback validieren und speichern
+                    if validate_feedback_entry(feedback_entry):
+                        save_feedback_to_github(github_token, github_repo, feedback_entry)
+                    else:
+                        st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+            
+            # ✅ Feedback bei "👎 Antwort verbessern"
             with col2:
                 if st.button("👎 Antwort verbessern"):
-                    save_feedback_to_github(github_token, github_repo, {
-                        "query": query_input, "response": feedback_comment, "feedback": "👎", "comment": feedback_comment, "timestamp": datetime.datetime.now().isoformat()
-                    })
+                    feedback_entry = {
+                        "query": query_input,
+                        "response": feedback_comment,
+                        "feedback": "👎",
+                        "comment": feedback_comment,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
 
+                    # ✅ Feedback validieren und speichern
+                    if validate_feedback_entry(feedback_entry):
+                        save_feedback_to_github(github_token, github_repo, feedback_entry)
+                    else:
+                        st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+
+            # 📊 Zeige die letzten Feedback-Einträge
             show_last_feedback_entries(github_token, github_repo)
-
-if __name__ == "__main__":
-    main()
