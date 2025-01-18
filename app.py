@@ -42,7 +42,7 @@ def rag_search_with_gemini(model, vectorstore, query, k=5):
     relevant_docs = vectorstore.similarity_search(query, k=k)
     context = "\n".join([doc.page_content for doc in relevant_docs])
 
-    prompt = f"Nutze diesen Kontext, um präzise zu antworten:\n\n{context}\n\nFrage:\n{query}\n\nAntworte kurz und präzise."
+    prompt = f"Nutze diesen Kontext, um präzise zu antworten:\n\n{context}\n\nFrage:\n{query}\n\nAntworte kurz und präzise sowie in strukturierter Form."
     
     try:
         response = model.generate_content(prompt)
@@ -62,15 +62,15 @@ def main():
     generation_config = {
         "temperature": 0.2,
         "top_p": 0.9,
-        "top_k": 20,
-        "max_output_tokens": 6000,
+        "top_k": 10,
+        "max_output_tokens": 8000,
     }
 
     # 📦 Vektorspeicher initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=100)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_optimized_vector_store(text_chunks)
 
