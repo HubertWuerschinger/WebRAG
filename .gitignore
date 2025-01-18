@@ -1,0 +1,2 @@
+# Um die .env-Datei vom Hochladen auszuschließen
+.env
