@@ -194,14 +194,17 @@ def check_feedback_file_access(github_token, github_repo, file_path="user_feedba
 
 # 🔟 🚀 Hauptprozess
 def main():
+    # 🔑 API-Schlüssel und Konfiguration laden
     api_key, github_token, github_repo = load_api_keys()
     genai.configure(api_key=api_key)
 
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
+    # ✅ GitHub-Zugriff prüfen
     check_github_access(github_token, github_repo)
 
+    # ✅ Session State initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
@@ -209,54 +212,78 @@ def main():
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks, github_token, github_repo)
 
-    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+    if "query_input" not in st.session_state:
+        st.session_state.query_input = ""
+
+    if "generated_result" not in st.session_state:
+        st.session_state.generated_result = ""
+
+    if "feedback_comment" not in st.session_state:
+        st.session_state.feedback_comment = ""
+
+    if "feedback_saved" not in st.session_state:
+        st.session_state.feedback_saved = False
+
+    # ✅ Benutzereingabe für die Frage
+    st.session_state.query_input = st.text_input("Stellen Sie hier Ihre Frage:", value=st.session_state.query_input)
     generate_button = st.button("Antwort generieren")
 
-    if generate_button and query_input:
+    # ✅ Antwort generieren
+    if generate_button and st.session_state.query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
-            result = generate_response_with_feedback(st.session_state.vectorstore, query_input, model)
+            st.session_state.generated_result = generate_response_with_feedback(st.session_state.vectorstore, st.session_state.query_input, model)
 
             st.success("📝 Antwort:")
-            st.write(result)
+            st.write(st.session_state.generated_result)
 
-            feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):")
+    # ✅ Eingabe für Feedback-Kommentar
+    st.session_state.feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):", value=st.session_state.feedback_comment)
 
-            col1, col2 = st.columns(2)
-            
-            # ✅ Feedback bei "👍 Antwort war hilfreich"
-            with col1:
-                if st.button("👍 Antwort war hilfreich"):
-                    feedback_entry = {
-                        "query": query_input,
-                        "response": result,
-                        "feedback": "👍",
-                        "comment": feedback_comment,
-                        "timestamp": datetime.datetime.now().isoformat()
-                    }
-                    
-                    # ✅ Feedback validieren und speichern
-                    if validate_feedback_entry(feedback_entry):
-                        save_feedback_to_github(github_token, github_repo, feedback_entry)
-                    else:
-                        st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
-            
-            # ✅ Feedback bei "👎 Antwort verbessern"
-            with col2:
-                if st.button("👎 Antwort verbessern"):
-                    feedback_entry = {
-                        "query": query_input,
-                        "response": feedback_comment,
-                        "feedback": "👎",
-                        "comment": feedback_comment,
-                        "timestamp": datetime.datetime.now().isoformat()
-                    }
+    col1, col2 = st.columns(2)
 
-                    # ✅ Feedback validieren und speichern
-                    if validate_feedback_entry(feedback_entry):
-                        save_feedback_to_github(github_token, github_repo, feedback_entry)
-                    else:
-                        st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+    # ✅ Feedback bei "👍 Antwort war hilfreich"
+    with col1:
+        if st.button("👍 Antwort war hilfreich"):
+            feedback_entry = {
+                "query": st.session_state.query_input,
+                "response": st.session_state.generated_result,
+                "feedback": "👍",
+                "comment": st.session_state.feedback_comment,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
 
-            # 📊 Zeige die letzten Feedback-Einträge
-            show_last_feedback_entries(github_token, github_repo)
+            # ✅ Feedback validieren und speichern
+            if validate_feedback_entry(feedback_entry):
+                save_feedback_to_github(github_token, github_repo, feedback_entry)
+                st.session_state.feedback_saved = True
+                st.success("✅ Feedback gespeichert!")
+            else:
+                st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+
+    # ✅ Feedback bei "👎 Antwort verbessern"
+    with col2:
+        if st.button("👎 Antwort verbessern"):
+            if st.session_state.feedback_comment.strip():
+                feedback_entry = {
+                    "query": st.session_state.query_input,
+                    "response": st.session_state.feedback_comment,
+                    "feedback": "👎",
+                    "comment": st.session_state.feedback_comment,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+
+                # ✅ Feedback validieren und speichern
+                if validate_feedback_entry(feedback_entry):
+                    save_feedback_to_github(github_token, github_repo, feedback_entry)
+                    st.session_state.feedback_saved = True
+                    st.success("✅ Verbesserte Antwort gespeichert!")
+                else:
+                    st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+            else:
+                st.warning("⚠️ Bitte eine korrekte Antwort eingeben.")
+
+    # 📊 Letzte Feedback-Einträge anzeigen, wenn gespeichert wurde
+    if st.session_state.feedback_saved:
+        show_last_feedback_entries(github_token, github_repo)
+        st.session_state.feedback_saved = False  # Zurücksetzen nach Anzeige
