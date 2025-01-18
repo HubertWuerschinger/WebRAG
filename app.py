@@ -117,14 +117,65 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
         return "Fehler bei der Antwortgenerierung."
 
+
+# 📂 Schreib- und Leseprüfung der Feedback-Datei
+def check_feedback_file_access(github_token, github_repo, file_path="user_feedback.jsonl"):
+    """
+    Überprüft, ob die Feedback-Datei auf GitHub lesbar und beschreibbar ist.
+
+    Args:
+        github_token (str): GitHub-Zugriffstoken.
+        github_repo (str): Repository-Name.
+        file_path (str): Pfad zur Feedback-Datei im Repository.
+
+    Raises:
+        Streamlit-Fehler: Falls kein Zugriff möglich ist.
+    """
+    try:
+        g = Github(github_token)
+        repo = g.get_repo(github_repo)
+
+        # ✅ Lesbarkeit prüfen
+        contents = repo.get_contents(file_path)
+        st.success(f"📖 Lesbarkeit von {file_path} bestätigt!")
+
+        # ✍️ Schreibbarkeit testen (temporären Eintrag hinzufügen und löschen)
+        test_entry = {
+            "query": "Testzugriff",
+            "response": "Dies ist ein Schreibtest.",
+            "feedback": "✅",
+            "comment": "Automatischer Testeintrag",
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+
+        updated_content = contents.decoded_content.decode() + json.dumps(test_entry) + "\n"
+        repo.update_file(contents.path, "🔎 Testeintrag hinzugefügt", updated_content, contents.sha)
+        st.success("✍️ Schreibbarkeit der Feedback-Datei bestätigt!")
+
+        # 🔄 Testeintrag wieder entfernen
+        latest_contents = repo.get_contents(file_path)
+        cleaned_content = "\n".join(latest_contents.decoded_content.decode().splitlines()[:-1])
+        repo.update_file(latest_contents.path, "🧹 Testeintrag entfernt", cleaned_content, latest_contents.sha)
+        st.success("🧹 Testeintrag erfolgreich entfernt!")
+
+    except Exception as e:
+        st.error(f"❌ Fehler beim Zugriff auf {file_path}: {e}")
+        st.stop()
+
+
+
+
 # 🔟 🚀 Hauptprozess
 def main():
     api_key, github_token, github_repo = load_api_keys()
     genai.configure(api_key=api_key)
+
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
+    # ✅ GitHub-Zugriff und Feedback-Datei prüfen
     check_github_access(github_token, github_repo)
+    check_feedback_file_access(github_token, github_repo)  # 👈 Schreib-/Leseprüfung für Feedback-Datei
 
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
