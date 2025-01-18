@@ -11,7 +11,7 @@ import json
 import datetime
 from github import Github
 
-# 🔑 API-Schlüssel laden
+# 1️⃣ 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -23,31 +23,24 @@ def load_api_keys():
         st.stop()
     return api_key, github_token, github_repo
 
-# ✅ GitHub-Zugriffsprüfung
+# 2️⃣ ✅ GitHub-Zugriffsprüfung
 def check_github_access(github_token, github_repo):
     try:
         g = Github(github_token)
         repo = g.get_repo(github_repo)
         st.success(f"✅ Verbindung zu {github_repo} erfolgreich!")
-
-        # Schreibrechte testen
-        test_file_path = "test_access.txt"
-        repo.create_file(test_file_path, "Testzugriff", "Dies ist ein Test.", branch="main")
-        test_file = repo.get_contents(test_file_path)
-        repo.delete_file(test_file.path, "Testzugriff gelöscht", test_file.sha, branch="main")
-        st.success("📝 Schreibrechte erfolgreich getestet!")
     except Exception as e:
         st.error(f"❌ GitHub-Zugriffsfehler: {e}")
         st.stop()
 
-# 📂 Körber-Daten laden
+# 3️⃣ 📂 Körber-Daten laden
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), 
              "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
             for doc in dataset["train"]]
 
-# 📥 Feedback von GitHub laden
+# 4️⃣ 📥 Feedback von GitHub laden
 def load_feedback_from_github(github_token, github_repo):
     try:
         g = Github(github_token)
@@ -58,20 +51,19 @@ def load_feedback_from_github(github_token, github_repo):
     except Exception:
         return []
 
-# 📦 Vektorspeicher erstellen
+# 5️⃣ 📦 Vektorspeicher erstellen (mit Feedback)
 def get_vector_store(text_chunks, github_token, github_repo):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
         feedback_data = load_feedback_from_github(github_token, github_repo)
         feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
         combined_chunks = text_chunks + feedback_chunks
-
         return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
     except Exception as e:
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Schlagwörter extrahieren
+# 6️⃣ 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
     prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
@@ -81,7 +73,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 💬 Feedback auf GitHub speichern
+# 7️⃣ 💬 Feedback auf GitHub speichern (SHA-Schutz)
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
@@ -98,14 +90,14 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
     except Exception as e:
         st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
-# 📊 Letzte Feedback-Einträge anzeigen
+# 8️⃣ 📊 Letzte Feedback-Einträge anzeigen
 def show_last_feedback_entries(github_token, github_repo):
     feedback_data = load_feedback_from_github(github_token, github_repo)[-3:]
     st.markdown("### 📄 **Letzte Feedback-Einträge:**")
     for entry in feedback_data:
         st.json(entry)
 
-# 📝 Antwort generieren
+# 9️⃣ 📝 Antwort generieren
 def generate_response_with_feedback(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
@@ -125,11 +117,10 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
         return "Fehler bei der Antwortgenerierung."
 
-# 🚀 Hauptprozess
+# 🔟 🚀 Hauptprozess
 def main():
     api_key, github_token, github_repo = load_api_keys()
     genai.configure(api_key=api_key)
-
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
