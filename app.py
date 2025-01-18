@@ -81,7 +81,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 💬 Feedback auf GitHub speichern mit SHA-Schutz
+# 💬 Feedback auf GitHub speichern
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
@@ -91,11 +91,10 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
         contents = repo.get_contents(file_path)
         sha = contents.sha
         existing_content = contents.decoded_content.decode()
-        updated_content = existing_content + json.dumps(feedback_entry) + "\n"
+        updated_content = existing_content + json.dumps(feedback_entry, ensure_ascii=False) + "\n"
 
         repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
         st.success("✅ Feedback wurde sicher auf GitHub gespeichert!")
-
     except Exception as e:
         st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
