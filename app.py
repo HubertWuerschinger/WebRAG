@@ -55,8 +55,8 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
 
-    # Zeige die letzten 3 Feedback-Einträge
-    show_last_feedback_entries(3)
+    # Feedback-Status aktualisieren
+    st.session_state["feedback_saved"] = True
 
 # 💡 Korrigierte Antworten speichern
 def save_correct_answer(query, correct_answer):
@@ -68,18 +68,8 @@ def save_correct_answer(query, correct_answer):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(correction_entry) + "\n")
 
-    # Zeige die letzten 3 Feedback-Einträge
-    show_last_feedback_entries(3)
-
-# 🔍 Prüfen, ob es eine gespeicherte richtige Antwort gibt
-def check_for_correction(query):
-    if os.path.exists("user_feedback.jsonl"):
-        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
-            for line in file:
-                entry = json.loads(line)
-                if entry.get("query", "").lower() == query.lower() and "correct_answer" in entry:
-                    return entry["correct_answer"]
-    return None
+    # Feedback-Status aktualisieren
+    st.session_state["feedback_saved"] = True
 
 # 📊 Letzte Feedback-Einträge anzeigen
 def show_last_feedback_entries(n):
@@ -91,15 +81,8 @@ def show_last_feedback_entries(n):
                 entry = json.loads(line)
                 st.json(entry)
 
-# 📝 Antwort generieren und Feedback berücksichtigen
+# 📝 Antwort generieren
 def generate_response_with_feedback(vectorstore, query, model, k=5):
-    # Prüfen, ob es eine gespeicherte Korrektur gibt
-    correction = check_for_correction(query)
-    if correction:
-        st.info("✅ Korrigierte Antwort aus vorherigem Feedback wurde verwendet.")
-        return correction
-
-    # Falls keine Korrektur vorhanden, Standard-RAG-Prozess
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
     context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
@@ -125,12 +108,16 @@ def main():
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
+    # Session State initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
+
+    if "feedback_saved" not in st.session_state:
+        st.session_state.feedback_saved = False
 
     query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
     generate_button = st.button("Antwort generieren")
@@ -149,6 +136,7 @@ def main():
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
                     save_feedback_jsonl(query_input, result, "👍", feedback_comment)
+                    st.success("✅ Feedback wurde gespeichert!")
             with col2:
                 if st.button("👎 Antwort verbessern"):
                     if feedback_comment.strip():
@@ -156,6 +144,11 @@ def main():
                         st.success("✅ Korrekte Antwort gespeichert!")
                     else:
                         st.warning("⚠️ Bitte eine korrekte Antwort eingeben.")
+
+    # Letzte 3 Feedback-Einträge anzeigen, wenn Feedback gespeichert wurde
+    if st.session_state.feedback_saved:
+        show_last_feedback_entries(3)
+        st.session_state.feedback_saved = False  # Zurücksetzen
 
 if __name__ == "__main__":
     main()
