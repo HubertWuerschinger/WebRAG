@@ -87,7 +87,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 💬 Feedback auf GitHub speichern
+# 💬 Feedback auf GitHub speichern mit erweiterter Fehlerüberprüfung
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
@@ -98,13 +98,20 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
             contents = repo.get_contents(file_path)
             existing_content = contents.decoded_content.decode()
             updated_content = existing_content + json.dumps(feedback_entry) + "\n"
+
+            # Speichern testen
             repo.update_file(contents.path, "Feedback aktualisiert", updated_content, contents.sha)
-        except Exception:
-            repo.create_file(file_path, "Feedback-Datei erstellt", json.dumps(feedback_entry) + "\n")
+            st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
         
-        st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
+        except Exception as e:
+            # Datei erstellen, falls sie nicht existiert
+            repo.create_file(file_path, "Feedback-Datei erstellt", json.dumps(feedback_entry) + "\n")
+            st.success("📝 Feedback-Datei wurde neu erstellt und Feedback gespeichert!")
+        
     except Exception as e:
         st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
+        st.exception(e)  # Zeigt den vollständigen Fehler
+
 
 # 💬 Feedback speichern
 def save_feedback(query, response, feedback_type, comment, github_token, github_repo):
