@@ -9,8 +9,9 @@ from datasets import load_dataset
 import re
 import json
 import datetime
+import matplotlib.pyplot as plt
 
-# 🔑 Lädt den API-Schlüssel aus der .env-Datei
+# 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -19,7 +20,7 @@ def load_api_keys():
         st.stop()
     return api_key
 
-# 📂 Lädt die JSONL-Daten für den Vektorspeicher
+# 📂 Körber-Daten laden
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{
@@ -29,7 +30,7 @@ def load_koerber_data():
         "title": doc["meta"].get("title", "Kein Titel")
     } for doc in dataset["train"]]
 
-# 📦 Erzeugt den Vektorspeicher mit FAISS
+# 📦 Vektorspeicher erstellen
 def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
@@ -38,9 +39,9 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Extrahiert Schlagwörter aus der Benutzeranfrage mit Gemini
+# 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Schlagwörter aus der folgenden Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
+    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
         response = model.generate_content(prompt)
         return re.findall(r'\b\w{3,}\b', response.text)
@@ -48,7 +49,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 🔎 RAG-Suche mit präzisem Kontext und URL-Integration
+# 📊 Vektorspeicher durchsuchen
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
@@ -56,17 +57,15 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📝 Generiert strukturierte Antworten mit Gemini
+# 📝 Antwort generieren
 def generate_response_with_gemini(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     context, urls = search_vectorstore(vectorstore, keywords, query, k)
     prompt_template = f"""
-    Nutze den folgenden Kontext, um präzise und strukturierte Antworten zu liefern:
-
     Kontext: {context}
     Frage: {query}
-
-    Füge relevante Links ein, wenn vorhanden.
+    
+    Antworte strukturiert und präzise.
     """
     try:
         response = model.generate_content(prompt_template)
@@ -95,7 +94,20 @@ def save_feedback(query, response, feedback_type, comment):
     with open("user_feedback.json", "w", encoding="utf-8") as file:
         json.dump(data, file, indent=4)
 
-# 🚀 Hauptprozess zur Steuerung des Chatbots
+# 📊 Feedback auswerten
+def analyze_feedback():
+    if not os.path.exists("user_feedback.json"):
+        return 0, 0
+
+    with open("user_feedback.json", "r", encoding="utf-8") as file:
+        data = json.load(file)
+    
+    positive_feedback = sum(1 for item in data["feedback"] if item["feedback"] == "👍")
+    negative_feedback = sum(1 for item in data["feedback"] if item["feedback"] == "👎")
+    
+    return positive_feedback, negative_feedback
+
+# 🚀 Hauptprozess
 def main():
     api_key = load_api_keys()
     genai.configure(api_key=api_key)
@@ -110,9 +122,6 @@ def main():
     }
 
     if "vectorstore" not in st.session_state:
-        st.session_state.vectorstore = None
-
-    if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
@@ -130,21 +139,26 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            st.markdown("### 🔗 **Relevante Links:**")
-            for url in urls:
-                if url:
-                    st.markdown(f"- [Mehr erfahren]({url})")
-
             st.markdown("### 💬 **Feedback zur Antwort:**")
+            feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
+
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
-                    save_feedback(query_input, result, "👍", "")
+                    save_feedback(query_input, result, "👍", feedback_comment)
                     st.success("Danke für dein Feedback!")
             with col2:
                 if st.button("👎 Antwort verbessern"):
-                    save_feedback(query_input, result, "👎", "Bitte verbessern")
+                    save_feedback(query_input, result, "👎", feedback_comment)
                     st.warning("Danke für dein Feedback!")
+
+            # 📊 Feedback-Analyse
+            pos, neg = analyze_feedback()
+            st.markdown("### 📊 **Feedback-Statistik:**")
+            fig, ax = plt.subplots()
+            ax.bar(["👍 Positiv", "👎 Negativ"], [pos, neg], color=["green", "red"])
+            ax.set_ylabel("Anzahl")
+            st.pyplot(fig)
 
 if __name__ == "__main__":
     main()
