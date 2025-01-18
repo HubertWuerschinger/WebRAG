@@ -9,61 +9,48 @@ from datasets import load_dataset
 import re
 import json
 import datetime
-from github import Github
 
-# 1️⃣ 🔑 API-Schlüssel laden
+# 📂 Feedback-Dateipfad (lokal)
+FEEDBACK_FILE_PATH = "user_feedback.jsonl"
+
+# 🔑 API-Schlüssel laden
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    github_token = os.getenv("GITHUB_TOKEN")
-    github_repo = os.getenv("GITHUB_REPO")
-
-    if not api_key or not github_token or not github_repo:
-        st.error("API- oder GitHub-Schlüssel fehlen. Bitte die .env-Datei prüfen.")
+    if not api_key:
+        st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key, github_token, github_repo
+    return api_key
 
-# 2️⃣ ✅ GitHub-Zugriffsprüfung
-def check_github_access(github_token, github_repo):
-    try:
-        g = Github(github_token)
-        repo = g.get_repo(github_repo)
-        st.success(f"✅ Verbindung zu {github_repo} erfolgreich!")
-    except Exception as e:
-        st.error(f"❌ GitHub-Zugriffsfehler: {e}")
-        st.stop()
-
-# 3️⃣ 📂 Körber-Daten laden
+# 📂 Körber-Daten laden
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
     return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), 
              "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
             for doc in dataset["train"]]
 
-# 4️⃣ 📥 Feedback von GitHub laden
-def load_feedback_from_github(github_token, github_repo):
-    try:
-        g = Github(github_token)
-        repo = g.get_repo(github_repo)
-        contents = repo.get_contents("user_feedback.jsonl")
-        feedback_data = contents.decoded_content.decode().splitlines()
-        return [json.loads(entry) for entry in feedback_data]
-    except Exception:
+# 📥 Feedback lokal laden
+def load_feedback_locally():
+    if not os.path.exists(FEEDBACK_FILE_PATH):
         return []
+    with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as file:
+        feedback_data = file.readlines()
+    return [json.loads(entry) for entry in feedback_data]
 
-# 5️⃣ 📦 Vektorspeicher erstellen (mit Feedback)
-def get_vector_store(text_chunks, github_token, github_repo):
+# 📦 Vektorspeicher erstellen (inkl. Feedback)
+def get_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        feedback_data = load_feedback_from_github(github_token, github_repo)
-        feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
+        feedback_data = load_feedback_locally()
+        feedback_chunks = [{"content": entry["completion"]} for entry in feedback_data]
         combined_chunks = text_chunks + feedback_chunks
+
         return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
     except Exception as e:
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 6️⃣ 🔍 Schlagwörter extrahieren
+# 🔍 Schlagwörter extrahieren
 def extract_keywords_with_llm(model, query):
     prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
     try:
@@ -73,58 +60,42 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 7️⃣ 💬 Feedback auf GitHub speichern (SHA-Schutz)
-def save_feedback_to_github(github_token, github_repo, feedback_entry):
-    """
-    Speichert das Feedback im JSONL-Format auf GitHub.
-
-    Args:
-        github_token (str): GitHub-Zugriffstoken.
-        github_repo (str): Repository-Name.
-        feedback_entry (dict): Feedback-Daten.
-    """
+# 💬 Feedback im gewünschten Format lokal speichern
+def save_feedback_locally(prompt, completion, comment=""):
+    feedback_entry = {
+        "prompt": prompt,
+        "completion": completion,
+        "meta": {
+            "title": "Benutzerdefiniertes Feedback",
+            "url": "N/A",
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    }
     try:
-        g = Github(github_token)
-        repo = g.get_repo(github_repo)
-        file_path = "user_feedback.jsonl"
-
-        # Feedback-Datei lesen
-        contents = repo.get_contents(file_path)
-        sha = contents.sha
-        existing_content = contents.decoded_content.decode()
-
-        # 📝 Neues Feedback im JSONL-Format anhängen
-        updated_content = existing_content + json.dumps(feedback_entry, ensure_ascii=False) + "\n"
-
-        # ✅ Datei aktualisieren
-        repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
-        st.success("✅ Feedback wurde sicher im JSONL-Format auf GitHub gespeichert!")
-
+        with open(FEEDBACK_FILE_PATH, "a", encoding="utf-8") as file:
+            file.write(json.dumps(feedback_entry, ensure_ascii=False) + "\n")
+        st.success("✅ Feedback wurde lokal gespeichert!")
     except Exception as e:
-        st.error(f"❌ Fehler beim Speichern des Feedbacks in GitHub: {e}")
-        
-def validate_feedback_entry(feedback_entry):
-    """
-    Validiert das Feedback-Format vor dem Speichern.
+        st.error(f"❌ Fehler beim Speichern des Feedbacks: {e}")
 
-    Args:
-        feedback_entry (dict): Feedback-Daten.
+# 🔄 Vektorspeicher nach Feedback aktualisieren
+def update_vector_store_with_feedback(completion):
+    if "vectorstore" in st.session_state and completion:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        try:
+            st.session_state.vectorstore.add_texts([completion], embedding=embeddings)
+            st.success("🧠 Vektorspeicher wurde mit dem neuen Feedback aktualisiert!")
+        except Exception as e:
+            st.error(f"❌ Fehler beim Aktualisieren des Vektorspeichers: {e}")
 
-    Returns:
-        bool: True, wenn das Format korrekt ist.
-    """
-    required_keys = ["query", "response", "feedback", "comment", "timestamp"]
-    return all(key in feedback_entry for key in required_keys)
-
-
-# 8️⃣ 📊 Letzte Feedback-Einträge anzeigen
-def show_last_feedback_entries(github_token, github_repo):
-    feedback_data = load_feedback_from_github(github_token, github_repo)[-3:]
+# 📊 Letzte Feedback-Einträge anzeigen
+def show_last_feedback_entries():
+    feedback_data = load_feedback_locally()[-3:]
     st.markdown("### 📄 **Letzte Feedback-Einträge:**")
     for entry in feedback_data:
         st.json(entry)
 
-# 9️⃣ 📝 Antwort generieren
+# 📝 Antwort generieren
 def generate_response_with_feedback(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
@@ -144,91 +115,34 @@ def generate_response_with_feedback(vectorstore, query, model, k=5):
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
         return "Fehler bei der Antwortgenerierung."
 
+# 💾 Feedback-Button Callback
+def feedback_callback(feedback_type):
+    # Feedback als Antwort oder Kommentar speichern
+    feedback_response = st.session_state.feedback_comment if feedback_type == "👎" and st.session_state.feedback_comment.strip() else st.session_state.generated_result
 
-# 📂 Schreib- und Leseprüfung der Feedback-Datei
-def check_feedback_file_access(github_token, github_repo, file_path="user_feedback.jsonl"):
-    """
-    Überprüft, ob die Feedback-Datei auf GitHub lesbar und beschreibbar ist.
+    # Feedback im neuen Format speichern
+    save_feedback_locally(st.session_state.query_input, feedback_response)
+    update_vector_store_with_feedback(feedback_response)
+    st.session_state.feedback_saved = True
 
-    Args:
-        github_token (str): GitHub-Zugriffstoken.
-        github_repo (str): Repository-Name.
-        file_path (str): Pfad zur Feedback-Datei im Repository.
-
-    Raises:
-        Streamlit-Fehler: Falls kein Zugriff möglich ist.
-    """
-    try:
-        g = Github(github_token)
-        repo = g.get_repo(github_repo)
-
-        # ✅ Lesbarkeit prüfen
-        contents = repo.get_contents(file_path)
-        st.success(f"📖 Lesbarkeit von {file_path} bestätigt!")
-
-        # ✍️ Schreibbarkeit testen (temporären Eintrag hinzufügen und löschen)
-        test_entry = {
-            "query": "Testzugriff",
-            "response": "Dies ist ein Schreibtest.",
-            "feedback": "✅",
-            "comment": "Automatischer Testeintrag",
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-
-        updated_content = contents.decoded_content.decode() + json.dumps(test_entry) + "\n"
-        repo.update_file(contents.path, "🔎 Testeintrag hinzugefügt", updated_content, contents.sha)
-        st.success("✍️ Schreibbarkeit der Feedback-Datei bestätigt!")
-
-        # 🔄 Testeintrag wieder entfernen
-        latest_contents = repo.get_contents(file_path)
-        cleaned_content = "\n".join(latest_contents.decoded_content.decode().splitlines()[:-1])
-        repo.update_file(latest_contents.path, "🧹 Testeintrag entfernt", cleaned_content, latest_contents.sha)
-        st.success("🧹 Testeintrag erfolgreich entfernt!")
-
-    except Exception as e:
-        st.error(f"❌ Fehler beim Zugriff auf {file_path}: {e}")
-        st.stop()
-
-
-
-
-# 🔟 🚀 Hauptprozess
+# 🚀 Hauptprozess
 def main():
-    # 🔑 API-Schlüssel und Konfiguration laden
-    api_key, github_token, github_repo = load_api_keys()
+    api_key = load_api_keys()
     genai.configure(api_key=api_key)
 
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
-    # ✅ GitHub-Zugriff prüfen
-    check_github_access(github_token, github_repo)
-
-    # ✅ Session State initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
-            st.session_state.vectorstore = get_vector_store(text_chunks, github_token, github_repo)
+            st.session_state.vectorstore = get_vector_store(text_chunks)
 
-    if "query_input" not in st.session_state:
-        st.session_state.query_input = ""
-
-    if "generated_result" not in st.session_state:
-        st.session_state.generated_result = ""
-
-    if "feedback_comment" not in st.session_state:
-        st.session_state.feedback_comment = ""
-
-    if "feedback_saved" not in st.session_state:
-        st.session_state.feedback_saved = False
-
-    # ✅ Benutzereingabe für die Frage
-    st.session_state.query_input = st.text_input("Stellen Sie hier Ihre Frage:", value=st.session_state.query_input)
+    st.session_state.query_input = st.text_input("Stellen Sie hier Ihre Frage:", value=st.session_state.get("query_input", ""))
     generate_button = st.button("Antwort generieren")
 
-    # ✅ Antwort generieren
     if generate_button and st.session_state.query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
@@ -237,53 +151,19 @@ def main():
             st.success("📝 Antwort:")
             st.write(st.session_state.generated_result)
 
-    # ✅ Eingabe für Feedback-Kommentar
-    st.session_state.feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):", value=st.session_state.feedback_comment)
+    st.session_state.feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):", value=st.session_state.get("feedback_comment", ""))
 
     col1, col2 = st.columns(2)
 
-    # ✅ Feedback bei "👍 Antwort war hilfreich"
-    with col1:
-        if st.button("👍 Antwort war hilfreich"):
-            feedback_entry = {
-                "query": st.session_state.query_input,
-                "response": st.session_state.generated_result,
-                "feedback": "👍",
-                "comment": st.session_state.feedback_comment,
-                "timestamp": datetime.datetime.now().isoformat()
-            }
+    # 👍 Feedback-Button
+    col1.button("👍 Antwort war hilfreich", on_click=feedback_callback, args=("👍",))
 
-            # ✅ Feedback validieren und speichern
-            if validate_feedback_entry(feedback_entry):
-                save_feedback_to_github(github_token, github_repo, feedback_entry)
-                st.session_state.feedback_saved = True
-                st.success("✅ Feedback gespeichert!")
-            else:
-                st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
+    # 👎 Feedback-Button
+    col2.button("👎 Antwort verbessern", on_click=feedback_callback, args=("👎",))
 
-    # ✅ Feedback bei "👎 Antwort verbessern"
-    with col2:
-        if st.button("👎 Antwort verbessern"):
-            if st.session_state.feedback_comment.strip():
-                feedback_entry = {
-                    "query": st.session_state.query_input,
-                    "response": st.session_state.feedback_comment,
-                    "feedback": "👎",
-                    "comment": st.session_state.feedback_comment,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
+    if st.session_state.get("feedback_saved"):
+        show_last_feedback_entries()
+        st.session_state.feedback_saved = False
 
-                # ✅ Feedback validieren und speichern
-                if validate_feedback_entry(feedback_entry):
-                    save_feedback_to_github(github_token, github_repo, feedback_entry)
-                    st.session_state.feedback_saved = True
-                    st.success("✅ Verbesserte Antwort gespeichert!")
-                else:
-                    st.error("❌ Feedback-Format ist ungültig. Feedback wurde nicht gespeichert.")
-            else:
-                st.warning("⚠️ Bitte eine korrekte Antwort eingeben.")
-
-    # 📊 Letzte Feedback-Einträge anzeigen, wenn gespeichert wurde
-    if st.session_state.feedback_saved:
-        show_last_feedback_entries(github_token, github_repo)
-        st.session_state.feedback_saved = False  # Zurücksetzen nach Anzeige
+if __name__ == "__main__":
+    main()
