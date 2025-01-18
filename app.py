@@ -9,7 +9,6 @@ from datasets import load_dataset
 import re
 import json
 import datetime
-import matplotlib.pyplot as plt
 
 # 🔑 API-Schlüssel laden
 def load_api_keys():
@@ -57,12 +56,19 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📝 Antwort generieren
-def generate_response_with_gemini(vectorstore, query, model, k=5):
+# 📝 Antwort generieren und Feedback berücksichtigen
+def generate_response_with_feedback(vectorstore, query, model, k=5):
+    # 🔎 Schlagwörter extrahieren
     keywords = extract_keywords_with_llm(model, query)
     context, urls = search_vectorstore(vectorstore, keywords, query, k)
+
+    # 💡 Vorheriges Feedback berücksichtigen
+    feedback_comments = load_feedback_comments(query)
+    feedback_context = "\n".join([f"- {comment}" for comment in feedback_comments])
+
     prompt_template = f"""
     Kontext: {context}
+    Vorheriges Feedback: {feedback_context}
     Frage: {query}
     
     Antworte strukturiert und präzise.
@@ -74,38 +80,28 @@ def generate_response_with_gemini(vectorstore, query, model, k=5):
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
         return "Fehler bei der Antwortgenerierung.", []
 
-# 💬 Feedback speichern
-def save_feedback(query, response, feedback_type, comment):
-    feedback_data = {
+# 💬 Feedback speichern in JSONL
+def save_feedback_jsonl(query, response, feedback_type, comment):
+    feedback_entry = {
         "query": query,
         "response": response,
         "feedback": feedback_type,
         "comment": comment,
         "timestamp": datetime.datetime.now().isoformat()
     }
-    if os.path.exists("user_feedback.json"):
-        with open("user_feedback.json", "r", encoding="utf-8") as file:
-            data = json.load(file)
-    else:
-        data = {"feedback": []}
+    with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
+        file.write(json.dumps(feedback_entry) + "\n")
 
-    data["feedback"].append(feedback_data)
-
-    with open("user_feedback.json", "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4)
-
-# 📊 Feedback auswerten
-def analyze_feedback():
-    if not os.path.exists("user_feedback.json"):
-        return 0, 0
-
-    with open("user_feedback.json", "r", encoding="utf-8") as file:
-        data = json.load(file)
-    
-    positive_feedback = sum(1 for item in data["feedback"] if item["feedback"] == "👍")
-    negative_feedback = sum(1 for item in data["feedback"] if item["feedback"] == "👎")
-    
-    return positive_feedback, negative_feedback
+# 📥 Feedback-Kommentare laden
+def load_feedback_comments(query):
+    comments = []
+    if os.path.exists("user_feedback.jsonl"):
+        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
+            for line in file:
+                entry = json.loads(line)
+                if entry["query"].lower() == query.lower() and entry["feedback"] == "👎":
+                    comments.append(entry["comment"])
+    return comments
 
 # 🚀 Hauptprozess
 def main():
@@ -134,31 +130,23 @@ def main():
     if generate_button and query_input:
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            result, urls = generate_response_with_gemini(st.session_state.vectorstore, query_input, model)
+            result, urls = generate_response_with_feedback(st.session_state.vectorstore, query_input, model)
 
             st.success("📝 Antwort:")
             st.write(result)
 
-            st.markdown("### 💬 **Feedback zur Antwort:**")
+            # 💬 Feedback
             feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
 
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
-                    save_feedback(query_input, result, "👍", feedback_comment)
+                    save_feedback_jsonl(query_input, result, "👍", feedback_comment)
                     st.success("Danke für dein Feedback!")
             with col2:
                 if st.button("👎 Antwort verbessern"):
-                    save_feedback(query_input, result, "👎", feedback_comment)
+                    save_feedback_jsonl(query_input, result, "👎", feedback_comment)
                     st.warning("Danke für dein Feedback!")
-
-            # 📊 Feedback-Analyse
-            pos, neg = analyze_feedback()
-            st.markdown("### 📊 **Feedback-Statistik:**")
-            fig, ax = plt.subplots()
-            ax.bar(["👍 Positiv", "👎 Negativ"], [pos, neg], color=["green", "red"])
-            ax.set_ylabel("Anzahl")
-            st.pyplot(fig)
 
 if __name__ == "__main__":
     main()
