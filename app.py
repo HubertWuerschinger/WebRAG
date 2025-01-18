@@ -22,20 +22,15 @@ def load_api_keys():
         st.error("API- oder GitHub-Schlüssel fehlen. Bitte die .env-Datei prüfen.")
         st.stop()
     return api_key, github_token, github_repo
-    
+
 # ✅ GitHub-Zugriffsprüfung
 def check_github_access(github_token, github_repo):
-    """
-    Überprüft den Zugriff auf das GitHub-Repository und die Schreibrechte.
-    """
     try:
         g = Github(github_token)
         repo = g.get_repo(github_repo)
-        
-        # Test: Repository Informationen abrufen
         st.success(f"✅ Verbindung zu {github_repo} erfolgreich!")
 
-        # Test: Schreibrechte prüfen durch temporäre Datei
+        # Schreibrechte testen
         test_file_path = "test_access.txt"
         repo.create_file(test_file_path, "Testzugriff", "Dies ist ein Test.", branch="main")
         repo.delete_file(test_file_path, "Testzugriff gelöscht", repo.get_contents(test_file_path).sha, branch="main")
@@ -52,16 +47,19 @@ def load_koerber_data():
              "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
             for doc in dataset["train"]]
 
-# 📦 Vektorspeicher erstellen (inkl. Feedback)
+# 📦 Vektorspeicher erstellen
 def get_vector_store(text_chunks, github_token, github_repo):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        # Feedback von GitHub laden und integrieren
         feedback_data = load_feedback_from_github(github_token, github_repo)
         feedback_chunks = [{"content": entry["response"]} for entry in feedback_data]
         combined_chunks = text_chunks + feedback_chunks
 
-        return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
+        vectorstore = FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
+        if vectorstore is None:
+            st.error("❌ Vektorspeicher konnte nicht erstellt werden.")
+        return vectorstore
+
     except Exception as e:
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
@@ -87,41 +85,23 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 💬 Feedback auf GitHub speichern mit erweiterter Fehlerüberprüfung
-# 💬 Feedback auf GitHub speichern mit SHA-Aktualisierung
+# 💬 Feedback auf GitHub speichern mit SHA
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
         repo = g.get_repo(github_repo)
         file_path = "user_feedback.jsonl"
 
-        # Aktuellsten SHA-Wert holen
         contents = repo.get_contents(file_path)
-        sha = contents.sha  # Aktueller SHA-Wert
+        sha = contents.sha
         existing_content = contents.decoded_content.decode()
-
-        # Feedback anhängen
         updated_content = existing_content + json.dumps(feedback_entry) + "\n"
 
-        # Datei mit aktuellem SHA aktualisieren
-        repo.update_file(
-            path=contents.path,
-            message="Feedback aktualisiert",
-            content=updated_content,
-            sha=sha  # Immer den aktuellen SHA nutzen
-        )
+        repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
         st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
-
+        
     except Exception as e:
-        # Falls die Datei nicht existiert, wird sie erstellt
-        if "404" in str(e):
-            repo.create_file(file_path, "Feedback-Datei erstellt", json.dumps(feedback_entry) + "\n")
-            st.success("📝 Feedback-Datei wurde neu erstellt und Feedback gespeichert!")
-        else:
-            st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
-            st.exception(e)
-
-
+        st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
 # 💬 Feedback speichern
 def save_feedback(query, response, feedback_type, comment, github_token, github_repo):
@@ -142,7 +122,7 @@ def show_last_feedback_entries(github_token, github_repo):
     for entry in feedback_data:
         st.json(entry)
 
-# 📝 Antwort generieren mit Feedback
+# 📝 Antwort generieren
 def generate_response_with_feedback(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
@@ -170,7 +150,6 @@ def main():
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
 
-    # 🔍 GitHub-Zugriff prüfen
     check_github_access(github_token, github_repo)
 
     if "vectorstore" not in st.session_state:
