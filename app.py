@@ -7,16 +7,17 @@ from langchain_community.vectorstores.faiss import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
 import re
+import json
+import datetime
 
 # 🔑 Lädt den API-Schlüssel aus der .env-Datei
 def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    if not api_key or not maps_api_key:
+    if not api_key:
         st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
         st.stop()
-    return api_key, maps_api_key
+    return api_key
 
 # 📂 Lädt die JSONL-Daten für den Vektorspeicher
 def load_koerber_data():
@@ -47,7 +48,7 @@ def extract_keywords_with_llm(model, query):
         st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
         return []
 
-# 📊 Durchsucht den Vektorspeicher mit Schlagwörtern und Query und liefert auch URLs
+# 🔎 RAG-Suche mit präzisem Kontext und URL-Integration
 def search_vectorstore(vectorstore, keywords, query, k=5):
     combined_query = " ".join(keywords + [query])
     relevant_content = vectorstore.similarity_search(combined_query, k=k)
@@ -55,33 +56,48 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📍 Google Maps Integration zur Standortanzeige
-def show_google_map(location, maps_api_key):
-    map_url = f"https://www.google.com/maps/embed/v1/place?key={maps_api_key}&q={location.replace(' ', '+')}"
-    st.markdown(f'<iframe width="100%" height="400" frameborder="0" style="border:0" src="{map_url}" allowfullscreen></iframe>', unsafe_allow_html=True)
-
 # 📝 Generiert strukturierte Antworten mit Gemini
 def generate_response_with_gemini(vectorstore, query, model, k=5):
     keywords = extract_keywords_with_llm(model, query)
     context, urls = search_vectorstore(vectorstore, keywords, query, k)
     prompt_template = f"""
-    Du bist ein Experte für Logistik und Ingenieurwesen. Beantworte die folgende Frage basierend auf dem Kontext:
+    Nutze den folgenden Kontext, um präzise und strukturierte Antworten zu liefern:
 
     Kontext: {context}
     Frage: {query}
 
-    Antworte strukturiert mit Beispielen und passenden Links.
+    Füge relevante Links ein, wenn vorhanden.
     """
     try:
         response = model.generate_content(prompt_template)
         return response.text, urls
     except Exception as e:
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
-        return "Es ist ein Fehler aufgetreten.", []
+        return "Fehler bei der Antwortgenerierung.", []
+
+# 💬 Feedback speichern
+def save_feedback(query, response, feedback_type, comment):
+    feedback_data = {
+        "query": query,
+        "response": response,
+        "feedback": feedback_type,
+        "comment": comment,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+    if os.path.exists("user_feedback.json"):
+        with open("user_feedback.json", "r", encoding="utf-8") as file:
+            data = json.load(file)
+    else:
+        data = {"feedback": []}
+
+    data["feedback"].append(feedback_data)
+
+    with open("user_feedback.json", "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=4)
 
 # 🚀 Hauptprozess zur Steuerung des Chatbots
 def main():
-    api_key, maps_api_key = load_api_keys()
+    api_key = load_api_keys()
     genai.configure(api_key=api_key)
     st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
     st.header("🔍 Wie können wir dir weiterhelfen?")
@@ -95,10 +111,6 @@ def main():
 
     if "vectorstore" not in st.session_state:
         st.session_state.vectorstore = None
-    if "documents" not in st.session_state:
-        st.session_state.documents = []
-    if "query" not in st.session_state:
-        st.session_state.query = ""
 
     if st.session_state.vectorstore is None:
         with st.spinner("Daten werden geladen..."):
@@ -106,36 +118,33 @@ def main():
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_vector_store(text_chunks)
-            st.session_state.documents = text_chunks
 
-    col1, col2 = st.columns([4, 1])
-
-    with col1:
-        query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
-
-    with col2:
-        generate_button = st.button("Antwort generieren")
+    query_input = st.text_input("Stellen Sie hier Ihre Frage:", value="")
+    generate_button = st.button("Antwort generieren")
 
     if generate_button and query_input:
-        st.session_state.query = query_input
         with st.spinner("Antwort wird generiert..."):
             model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
-            result, urls = generate_response_with_gemini(st.session_state.vectorstore, st.session_state.query, model)
+            result, urls = generate_response_with_gemini(st.session_state.vectorstore, query_input, model)
 
-            st.success("Antwort:")
-            st.write(f"**Eingabe:** {st.session_state.query}")
+            st.success("📝 Antwort:")
             st.write(result)
-
-            if any(keyword in ["standorte", "adresse", "büro", "niederlassung"] for keyword in extract_keywords_with_llm(model, query_input)):
-                st.markdown("### 📍 **Standort auf Google Maps:**")
-                show_google_map("Körber AG Hamburg", maps_api_key)
 
             st.markdown("### 🔗 **Relevante Links:**")
             for url in urls:
                 if url:
                     st.markdown(f"- [Mehr erfahren]({url})")
 
-            st.session_state.query = ""
+            st.markdown("### 💬 **Feedback zur Antwort:**")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("👍 Antwort war hilfreich"):
+                    save_feedback(query_input, result, "👍", "")
+                    st.success("Danke für dein Feedback!")
+            with col2:
+                if st.button("👎 Antwort verbessern"):
+                    save_feedback(query_input, result, "👎", "Bitte verbessern")
+                    st.warning("Danke für dein Feedback!")
 
 if __name__ == "__main__":
     main()
