@@ -37,12 +37,26 @@ def get_optimized_vector_store(text_chunks):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     return FAISS.from_texts(texts=[chunk["content"] for chunk in text_chunks], embedding=embeddings)
 
-# 🔍 RAG-Suche (Retrieval-Augmented Generation)
-def rag_search_with_gemini(model, vectorstore, query, k=5):
-    relevant_docs = vectorstore.similarity_search(query, k=k)
+# 🔍 Query Expansion für bessere Treffer
+def expand_query_with_synonyms(query):
+    synonyms = {
+        "mitarbeiter": ["beschäftigte", "arbeitskräfte", "personal"],
+        "standort": ["niederlassung", "büro", "filiale"]
+    }
+    expanded_query = query
+    for word, synonym_list in synonyms.items():
+        for synonym in synonym_list:
+            if word in query.lower():
+                expanded_query += f" {synonym}"
+    return expanded_query
+
+# 🔎 Optimierte RAG-Suche
+def rag_search_with_gemini(model, vectorstore, query, k=10):
+    expanded_query = expand_query_with_synonyms(query)
+    relevant_docs = vectorstore.similarity_search(expanded_query, k=k)
     context = "\n".join([doc.page_content for doc in relevant_docs])
 
-    prompt = f"Nutze diesen Kontext, um präzise zu antworten:\n\n{context}\n\nFrage:\n{query}\n\nAntworte kurz und präzise sowie in strukturierter Form."
+    prompt = f"Nutze diesen Kontext, um präzise zu antworten:\n\n{context}\n\nFrage:\n{query}\n\nAntworte kurz und präzise."
     
     try:
         response = model.generate_content(prompt)
@@ -62,15 +76,15 @@ def main():
     generation_config = {
         "temperature": 0.2,
         "top_p": 0.9,
-        "top_k": 10,
-        "max_output_tokens": 8000,
+        "top_k": 20,
+        "max_output_tokens": 6000,
     }
 
     # 📦 Vektorspeicher initialisieren
     if "vectorstore" not in st.session_state:
         with st.spinner("Daten werden geladen..."):
             documents = load_koerber_data()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=100)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
             st.session_state.vectorstore = get_optimized_vector_store(text_chunks)
 
