@@ -33,86 +33,48 @@ def get_vector_store(text_chunks):
         st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
         return None
 
-# 🔍 Schlagwörter extrahieren
-def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
-    try:
-        response = model.generate_content(prompt)
-        return re.findall(r'\b\w{3,}\b', response.text)
-    except Exception as e:
-        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
-        return []
-
-# 💬 Feedback speichern in JSONL
-def save_feedback_jsonl(query, response, feedback_type, comment):
+# 📥 Verbesserte Antworten speichern
+def save_corrected_answer(query, corrected_answer):
     feedback_entry = {
         "query": query,
-        "response": response,
-        "feedback": feedback_type,
-        "comment": comment,
+        "corrected_answer": corrected_answer,
         "timestamp": datetime.datetime.now().isoformat()
     }
-    try:
-        with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
-            file.write(json.dumps(feedback_entry, ensure_ascii=False) + "\n")
-        if check_feedback_saved(query, response):
-            st.success("✅ Feedback wurde erfolgreich gespeichert!")
-        else:
-            st.error("❌ Fehler beim Speichern des Feedbacks!")
-    except Exception as e:
-        st.error(f"❌ Fehler beim Speichern des Feedbacks: {e}")
+    with open("corrected_answers.jsonl", "a", encoding="utf-8") as file:
+        file.write(json.dumps(feedback_entry) + "\n")
+    st.success("✅ Die verbesserte Antwort wurde gespeichert!")
 
-# ✅ Überprüfen, ob Feedback gespeichert wurde
-def check_feedback_saved(query, response):
-    if not os.path.exists("user_feedback.jsonl"):
-        return False
-    with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
-        for line in file:
-            try:
-                entry = json.loads(line)
-                if entry["query"] == query and entry["response"] == response:
-                    return True
-            except json.JSONDecodeError:
-                continue
-    return False
-
-# 📥 Feedback-Kommentare laden
-def load_feedback_comments(query):
-    comments = []
-    if os.path.exists("user_feedback.jsonl"):
-        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
+# 🔎 Prüfen, ob es bereits eine verbesserte Antwort gibt
+def load_corrected_answer(query):
+    if os.path.exists("corrected_answers.jsonl"):
+        with open("corrected_answers.jsonl", "r", encoding="utf-8") as file:
             for line in file:
-                try:
-                    entry = json.loads(line)
-                    if entry["query"].lower() == query.lower() and entry["feedback"] == "👎":
-                        comments.append(entry["comment"])
-                except json.JSONDecodeError:
-                    st.warning("⚠️ Ungültiger Eintrag wurde übersprungen.")
-    return comments
+                entry = json.loads(line)
+                if entry["query"].lower() == query.lower():
+                    return entry["corrected_answer"]
+    return None
 
-# 📝 Antwort generieren und Feedback berücksichtigen
+# 📝 Antwort generieren und verbesserte Antworten berücksichtigen
 def generate_response_with_feedback(vectorstore, query, model, k=5):
+    corrected_answer = load_corrected_answer(query)
+    
+    if corrected_answer:
+        st.info("🔄 Diese Antwort basiert auf einer vorherigen Korrektur.")
+        return corrected_answer
+
+    # Standardantwort generieren, wenn keine Korrektur vorliegt
     keywords = extract_keywords_with_llm(model, query)
     relevant_content = vectorstore.similarity_search(query, k=k)
     context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
 
-    feedback_comments = load_feedback_comments(query)
-    feedback_context = "\n".join([f"- {comment}" for comment in feedback_comments])
-
     prompt_template = f"""
     Kontext: {context}
-    Vorheriges Feedback: {feedback_context}
     Frage: {query}
 
     Antworte strukturiert und präzise.
     """
-
     try:
         response = model.generate_content(prompt_template)
-        if feedback_comments:
-            st.info("🔍 Vorheriges Feedback wurde bei der Antwort berücksichtigt.")
-        else:
-            st.warning("⚠️ Kein vorheriges Feedback gefunden.")
         return response.text
     except Exception as e:
         st.error(f"Fehler bei der Antwortgenerierung: {e}")
@@ -143,15 +105,15 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("👍 Antwort war hilfreich"):
-                    save_feedback_jsonl(query_input, result, "👍", feedback_comment)
-            with col2:
-                if st.button("👎 Antwort verbessern"):
-                    save_feedback_jsonl(query_input, result, "👎", feedback_comment)
+            # Feedbackbereich
+            feedback_expander = st.expander("🛠️ Antwort verbessern")
+            with feedback_expander:
+                corrected_answer_input = st.text_area("Korrigiere die Antwort hier:")
+                if st.button("💾 Verbesserte Antwort speichern"):
+                    if corrected_answer_input:
+                        save_corrected_answer(query_input, corrected_answer_input)
+                    else:
+                        st.warning("⚠️ Bitte gib eine korrekte Antwort ein.")
 
 if __name__ == "__main__":
     main()
