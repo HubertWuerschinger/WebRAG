@@ -55,6 +55,9 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
 
+    # Zeige die letzten 3 Feedback-Einträge
+    show_last_feedback_entries(3)
+
 # 💡 Korrigierte Antworten speichern
 def save_correct_answer(query, correct_answer):
     correction_entry = {
@@ -65,6 +68,9 @@ def save_correct_answer(query, correct_answer):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(correction_entry) + "\n")
 
+    # Zeige die letzten 3 Feedback-Einträge
+    show_last_feedback_entries(3)
+
 # 🔍 Prüfen, ob es eine gespeicherte richtige Antwort gibt
 def check_for_correction(query):
     if os.path.exists("user_feedback.jsonl"):
@@ -74,6 +80,16 @@ def check_for_correction(query):
                 if entry.get("query", "").lower() == query.lower() and "correct_answer" in entry:
                     return entry["correct_answer"]
     return None
+
+# 📊 Letzte Feedback-Einträge anzeigen
+def show_last_feedback_entries(n):
+    if os.path.exists("user_feedback.jsonl"):
+        with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
+            lines = file.readlines()[-n:]  # Die letzten n Zeilen
+            st.markdown("### 📄 **Letzte Feedback-Einträge:**")
+            for line in lines:
+                entry = json.loads(line)
+                st.json(entry)
 
 # 📝 Antwort generieren und Feedback berücksichtigen
 def generate_response_with_feedback(vectorstore, query, model, k=5):
