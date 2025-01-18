@@ -86,6 +86,7 @@ def extract_keywords_with_llm(model, query):
         return []
 
 # 💬 Feedback auf GitHub speichern mit SHA
+# 💬 Feedback auf GitHub speichern mit erweiterter Fehlerbehandlung
 def save_feedback_to_github(github_token, github_repo, feedback_entry):
     try:
         g = Github(github_token)
@@ -93,27 +94,33 @@ def save_feedback_to_github(github_token, github_repo, feedback_entry):
         file_path = "user_feedback.jsonl"
 
         contents = repo.get_contents(file_path)
-        sha = contents.sha
+        sha = contents.sha  # SHA zur Vermeidung von Race Conditions prüfen
         existing_content = contents.decoded_content.decode()
+
         updated_content = existing_content + json.dumps(feedback_entry) + "\n"
 
-        repo.update_file(contents.path, "Feedback aktualisiert", updated_content, sha)
-        st.success("✅ Feedback wurde erfolgreich auf GitHub gespeichert!")
-        
+        # SHA erneut prüfen vor dem Speichern
+        latest_contents = repo.get_contents(file_path)
+        if sha != latest_contents.sha:
+            st.error("⚠️ Die Datei wurde zwischenzeitlich geändert. Bitte erneut versuchen.")
+            return
+
+        repo.update_file(
+            path=contents.path,
+            message="Feedback aktualisiert",
+            content=updated_content,
+            sha=sha
+        )
+        st.success("✅ Feedback wurde sicher auf GitHub gespeichert!")
+
     except Exception as e:
-        st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
+        if "403" in str(e):
+            st.error("❌ Keine Schreibrechte im Repository.")
+        elif "409" in str(e):
+            st.error("❌ SHA-Konflikt. Bitte Feedback erneut senden.")
+        else:
+            st.error(f"❌ Fehler beim Speichern in GitHub: {e}")
 
-# 💬 Feedback speichern
-def save_feedback(query, response, feedback_type, comment, github_token, github_repo):
-    feedback_entry = {
-        "query": query,
-        "response": response,
-        "feedback": feedback_type,
-        "comment": comment,
-        "timestamp": datetime.datetime.now().isoformat()
-    }
-
-    save_feedback_to_github(github_token, github_repo, feedback_entry)
 
 # 📊 Letzte Feedback-Einträge anzeigen
 def show_last_feedback_entries(github_token, github_repo):
