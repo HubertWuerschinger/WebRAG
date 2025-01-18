@@ -22,12 +22,7 @@ def load_api_keys():
 # 📂 Körber-Daten laden
 def load_koerber_data():
     dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    return [{
-        "content": doc["completion"],
-        "url": doc["meta"].get("url", ""),
-        "timestamp": doc["meta"].get("timestamp", ""),
-        "title": doc["meta"].get("title", "Kein Titel")
-    } for doc in dataset["train"]]
+    return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} for doc in dataset["train"]]
 
 # 📦 Vektorspeicher erstellen
 def get_vector_store(text_chunks):
@@ -56,30 +51,6 @@ def search_vectorstore(vectorstore, keywords, query, k=5):
     urls = [doc.metadata.get("url", "Keine URL gefunden") for doc in relevant_content if hasattr(doc, "metadata")]
     return context, urls[:3]
 
-# 📝 Antwort generieren und Feedback berücksichtigen
-def generate_response_with_feedback(vectorstore, query, model, k=5):
-    # 🔎 Schlagwörter extrahieren
-    keywords = extract_keywords_with_llm(model, query)
-    context, urls = search_vectorstore(vectorstore, keywords, query, k)
-
-    # 💡 Vorheriges Feedback berücksichtigen
-    feedback_comments = load_feedback_comments(query)
-    feedback_context = "\n".join([f"- {comment}" for comment in feedback_comments])
-
-    prompt_template = f"""
-    Kontext: {context}
-    Vorheriges Feedback: {feedback_context}
-    Frage: {query}
-    
-    Antworte strukturiert und präzise.
-    """
-    try:
-        response = model.generate_content(prompt_template)
-        return response.text, urls
-    except Exception as e:
-        st.error(f"Fehler bei der Antwortgenerierung: {e}")
-        return "Fehler bei der Antwortgenerierung.", []
-
 # 💬 Feedback speichern in JSONL
 def save_feedback_jsonl(query, response, feedback_type, comment):
     feedback_entry = {
@@ -92,6 +63,12 @@ def save_feedback_jsonl(query, response, feedback_type, comment):
     with open("user_feedback.jsonl", "a", encoding="utf-8") as file:
         file.write(json.dumps(feedback_entry) + "\n")
 
+    # 📂 Überprüfung, ob Feedback gespeichert wurde
+    if check_feedback_saved(query, response):
+        st.success("✅ Feedback erfolgreich gespeichert!")
+    else:
+        st.error("❌ Fehler beim Speichern des Feedbacks!")
+
 # 📥 Feedback-Kommentare laden
 def load_feedback_comments(query):
     comments = []
@@ -102,6 +79,45 @@ def load_feedback_comments(query):
                 if entry["query"].lower() == query.lower() and entry["feedback"] == "👎":
                     comments.append(entry["comment"])
     return comments
+
+# ✅ Überprüfung, ob Feedback gespeichert wurde
+def check_feedback_saved(query, response):
+    if not os.path.exists("user_feedback.jsonl"):
+        return False
+    with open("user_feedback.jsonl", "r", encoding="utf-8") as file:
+        for line in file:
+            entry = json.loads(line)
+            if entry["query"] == query and entry["response"] == response:
+                return True
+    return False
+
+# 📝 Antwort generieren und Feedback berücksichtigen
+def generate_response_with_feedback(vectorstore, query, model, k=5):
+    keywords = extract_keywords_with_llm(model, query)
+    context, urls = search_vectorstore(vectorstore, keywords, query, k)
+
+    feedback_comments = load_feedback_comments(query)
+    feedback_context = "\n".join([f"- {comment}" for comment in feedback_comments])
+
+    prompt_template = f"""
+    Kontext: {context}
+    Vorheriges Feedback: {feedback_context}
+    Frage: {query}
+
+    Antworte strukturiert und präzise.
+    """
+
+    try:
+        response = model.generate_content(prompt_template)
+        # ✅ Überprüfen, ob Feedback verwendet wurde
+        if feedback_comments:
+            st.info("🔍 Vorheriges Feedback wurde bei der Antwort berücksichtigt.")
+        else:
+            st.warning("⚠️ Kein vorheriges Feedback gefunden.")
+        return response.text, urls
+    except Exception as e:
+        st.error(f"Fehler bei der Antwortgenerierung: {e}")
+        return "Fehler bei der Antwortgenerierung.", []
 
 # 🚀 Hauptprozess
 def main():
@@ -135,18 +151,15 @@ def main():
             st.success("📝 Antwort:")
             st.write(result)
 
-            # 💬 Feedback
             feedback_comment = st.text_input("Kommentar zum Feedback (optional):")
 
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("👍 Antwort war hilfreich"):
                     save_feedback_jsonl(query_input, result, "👍", feedback_comment)
-                    st.success("Danke für dein Feedback!")
             with col2:
                 if st.button("👎 Antwort verbessern"):
                     save_feedback_jsonl(query_input, result, "👎", feedback_comment)
-                    st.warning("Danke für dein Feedback!")
 
 if __name__ == "__main__":
     main()
