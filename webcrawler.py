@@ -10,17 +10,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-# Funktion zum Abrufen der Details von Unterseiten
 def fetch_job_details(job_url):
-    """
-    Ruft die detaillierten Informationen von einer Job-Unterseite ab.
-
-    Args:
-        job_url (str): URL der Job-Unterseite.
-
-    Returns:
-        dict: Detailinformationen zum Job.
-    """
     retries = 5
     session = requests.Session()  # Verbindung stabilisieren
     for attempt in range(retries):
@@ -31,58 +21,44 @@ def fetch_job_details(job_url):
 
             # HTML in Zeilen aufteilen
             html_lines = response.text.splitlines()
-            
-            # Schlagwörter für englische und deutsche Stellen
             valid_keywords = {
                 "Your role in our team", 
                 "Ihre Rolle in unserem Team",
-                "Your profile",  # Deutsches Schlüsselwort
-                "Ihr Profil"                   # Deutsches Schlüsselwort
+                "Your profile",  
+                "Ihr Profil"
             }
             sections = {}
             current_section = None
 
-            # Zeilenweise durchsuchen
             for index, line in enumerate(html_lines):
-                if any(keyword in line for keyword in valid_keywords):  # Schlüsselwort gefunden
+                if any(keyword in line for keyword in valid_keywords):
                     current_section = next((kw for kw in valid_keywords if kw in line), None)
-                    print(f"Schlüsselwort gefunden: {current_section}")
                     sections[current_section] = []
 
-                    # Die nächsten 20 Zeilen durchsuchen
                     for offset in range(1, 21):
                         next_index = index + offset
                         if next_index < len(html_lines):
                             next_line = html_lines[next_index]
-                            if "<li>" in next_line:  # Zeilen mit <li> sammeln
+                            if "<li>" in next_line:
                                 clean_text = BeautifulSoup(next_line, "html.parser").get_text(strip=True)
                                 sections[current_section].append(clean_text)
 
-            # Beschreibung formatieren
             if sections:
                 formatted_description = "\n\n".join(
                     f"{title}:\n" + "\n".join(content) for title, content in sections.items()
                 )
                 return {"description": formatted_description}
             else:
-                print(f"Warnung: Keine relevanten Abschnitte auf {job_url} gefunden.")
                 return {"description": "Keine relevanten Abschnitte gefunden."}
 
         except requests.exceptions.RequestException as e:
             print(f"Fehler bei Anfrage {job_url} (Versuch {attempt + 1} von {retries}): {e}")
-            time.sleep(random.randint(1, 10))  # Zufällige Wartezeit zwischen 1 und 10 Sekunden
+            time.sleep(random.randint(1, 10))
 
     return {"description": "Details konnten nicht abgerufen werden."}
 
 
-
-
-
-
-
-# Webcrawler-Funktion
-def crawl_koerber_jobs(max_pages=5):
-    jobs = []
+def crawl_koerber_jobs(max_pages=5, output_file="koerber_data.json"):
     failed_urls = []
     page = 0
 
@@ -101,10 +77,10 @@ def crawl_koerber_jobs(max_pages=5):
                 time.sleep(random.randint(1, 10))
             except requests.exceptions.HTTPError as e:
                 print(f"HTTP-Fehler auf Seite {page + 1}: {e}")
-                return jobs
+                return
         else:
             print(f"Fehler: Seite {page + 1} konnte nicht geladen werden.")
-            return jobs
+            return
 
         soup = BeautifulSoup(response.text, "html.parser")
         job_tiles = soup.find_all("li", class_="job-tile")
@@ -115,58 +91,44 @@ def crawl_koerber_jobs(max_pages=5):
                 title = job.find("a", class_="jobTitle-link").text.strip()
                 company = job.find("div", id=lambda x: x and "customfield2-value" in x).text.strip()
                 location = job.find("div", id=lambda x: x and "multilocation-value" in x).text.strip()
-                
-                # URL zur Detailseite
+
                 relative_url = job.get("data-url")
                 full_url = f"https://jobs.koerber.com{relative_url}"
-                print(f"Generierte URL zur Detailseite: {full_url}")
-
-                # Details abrufen
                 job_details = fetch_job_details(full_url)
-                print(f"Details für {title}: {job_details}")
 
-                # Job speichern
-                jobs.append({
+                job_data = {
                     "title": title,
                     "company": company,
                     "location": location,
                     "url": full_url,
                     **job_details
-                })
-                time.sleep(random.randint(1, 10))  # Zufällige Wartezeit
+                }
+
+                # Speichere den Job direkt in die Datei
+                save_job_to_file(job_data, output_file)
+
+                time.sleep(random.randint(1, 10))
             except Exception as e:
                 print(f"Fehler bei der Verarbeitung eines Jobs: {e}")
                 failed_urls.append(full_url)
 
         page += 1
 
-    print(f"Gesammelte Jobs: {len(jobs)}")
     if failed_urls:
         print(f"Fehlerhafte URLs ({len(failed_urls)}):")
         for url in failed_urls:
             print(url)
 
-    return jobs
 
-
-
-
-# Daten speichern
-def save_jobs_to_file(jobs, filename="koerber_data.json"):
-    if not jobs:
-        print("Warnung: Keine Daten zum Speichern vorhanden.")
-        return
-
-    print(f"Speichere {len(jobs)} Jobs in {filename}...")
+def save_job_to_file(job, filename):
     try:
-        with open(filename, "w", encoding="utf-8") as file:
-            json.dump(jobs, file, ensure_ascii=False, indent=4)
-        print(f"Daten erfolgreich in {filename} gespeichert.")
+        with open(filename, "a", encoding="utf-8") as file:
+            file.write(json.dumps(job, ensure_ascii=False, indent=4) + ",\n")
+        print(f"Job gespeichert: {job['title']}")
     except Exception as e:
-        print(f"Fehler beim Speichern der Datei: {e}")
+        print(f"Fehler beim Speichern des Jobs: {e}")
 
 
-# Hauptprozess
 if __name__ == "__main__":
     import argparse
 
@@ -175,21 +137,4 @@ if __name__ == "__main__":
     parser.add_argument("--output_file", type=str, default="koerber_data.json", help="Dateiname für die gespeicherten Ergebnisse")
 
     args = parser.parse_args()
-
-    print("Starte Webcrawler...")
-    jobs = crawl_koerber_jobs(max_pages=args.max_pages)
-
-    # Gefundene Stellen ausgeben
-    print(f"{len(jobs)} Stellenangebote gefunden.")
-    for job in jobs:
-        print("\n--- Stellenangebot ---")
-        print(f"Titel: {job['title']}")
-        print(f"Firma: {job['company']}")
-        print(f"Ort: {job['location']}")
-        print(f"URL: {job['url']}")
-        print(f"Beschreibung:\n{job['description']}")
-        print("-" * 50)
-
-    # Daten in Datei speichern
-    save_jobs_to_file(jobs, filename=args.output_file)
-    print(f"Daten wurden in {args.output_file} gespeichert.")
+    crawl_koerber_jobs(max_pages=args.max_pages, output_file=args.output_file)

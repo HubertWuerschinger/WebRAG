@@ -1,169 +1,181 @@
 import os
 import streamlit as st
 import google.generativeai as genai
-from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores.faiss import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
-import re
+import faiss
+import numpy as np
 import json
-import datetime
-
-# 📂 Feedback-Dateipfad (lokal)
-FEEDBACK_FILE_PATH = "user_feedback.jsonl"
 
 # 🔑 API-Schlüssel laden
 def load_api_keys():
+    from dotenv import load_dotenv
     load_dotenv()
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        st.error("API-Schlüssel fehlt. Bitte die .env-Datei prüfen.")
+        st.error("GOOGLE_API_KEY fehlt. Bitte in der .env-Datei setzen.")
         st.stop()
-    return api_key
+    genai.configure(api_key=api_key)
 
-# 📂 Körber-Daten laden
-def load_koerber_data():
-    dataset = load_dataset("json", data_files={"train": "koerber_data.jsonl"})
-    return [{"content": doc["completion"], "url": doc["meta"].get("url", ""), 
-             "timestamp": doc["meta"].get("timestamp", ""), "title": doc["meta"].get("title", "Kein Titel")} 
-            for doc in dataset["train"]]
+# 🗋 JSONL-Daten laden
+def load_jsonl(file_path):
+    if not os.path.exists(file_path):
+        st.error(f"Die Datei {file_path} wurde nicht gefunden.")
+        st.stop()
+    dataset = load_dataset("json", data_files={"train": file_path})
+    return [
+        {
+            "content": doc["completion"],
+            "url": doc["meta"].get("url", ""),
+            "title": doc["meta"].get("title", "Unbekannter Titel")
+        } for doc in dataset["train"]
+    ]
 
-# 📥 Feedback lokal laden
-def load_feedback_locally():
-    if not os.path.exists(FEEDBACK_FILE_PATH):
-        return []
-    with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as file:
-        feedback_data = file.readlines()
-    return [json.loads(entry) for entry in feedback_data]
+# 🧩 Text in Chunks aufteilen
+def create_chunks(documents, chunk_size=400, overlap=10):
+    """
+    Teilt Dokumente in überlappende Chunks auf.
+    Args:
+        documents (list): Liste von Dokumenten mit Textinhalten.
+        chunk_size (int): Maximale Größe eines Chunks in Zeichen.
+        overlap (int): Überlappung zwischen aufeinanderfolgenden Chunks.
 
-# 📦 Vektorspeicher erstellen (inkl. Feedback)
-def get_vector_store(text_chunks):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    try:
-        feedback_data = load_feedback_locally()
-        feedback_chunks = [{"content": entry["completion"]} for entry in feedback_data]
-        combined_chunks = text_chunks + feedback_chunks
+    Returns:
+        list: Liste von Chunks mit zugehörigen Metadaten.
+    """
+    chunks = []
+    for doc in documents:
+        content = doc["content"]
+        for i in range(0, len(content), chunk_size - overlap):
+            chunk = content[i:i + chunk_size]
+            chunks.append({
+                "content": chunk,
+                "title": doc["title"],
+                "url": doc["url"]
+            })
+    return chunks
 
-        return FAISS.from_texts(texts=[chunk["content"] for chunk in combined_chunks], embedding=embeddings)
-    except Exception as e:
-        st.error(f"Fehler beim Erstellen des Vektorspeichers: {e}")
-        return None
+# 🌟 Embedding erstellen
+def generate_embeddings(chunks):
+    model = "models/embedding-001"
+    embeddings = [
+        genai.embed_content(model=model, content=chunk["content"], task_type="retrieval_document")["embedding"]
+        for chunk in chunks
+    ]
+    return np.array(embeddings, dtype="float32")
 
-# 🔍 Schlagwörter extrahieren
-def extract_keywords_with_llm(model, query):
-    prompt = f"Extrahiere relevante Schlagwörter aus dieser Anfrage:\n\n{query}\n\nNur Schlagwörter ohne Erklärungen."
-    try:
-        response = model.generate_content(prompt)
-        return re.findall(r'\b\w{3,}\b', response.text)
-    except Exception as e:
-        st.error(f"Fehler bei der Schlagwort-Extraktion: {e}")
-        return []
+# 🔖 FAISS Index erstellen und speichern
+def create_faiss_index(embeddings, chunks, faiss_path, metadata_path):
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
 
-# 💬 Feedback im gewünschten Format lokal speichern
-def save_feedback_locally(prompt, completion, comment=""):
-    feedback_entry = {
-        "prompt": prompt,
-        "completion": completion,
-        "meta": {
-            "title": "Benutzerdefiniertes Feedback",
-            "url": "N/A",
-            "timestamp": datetime.datetime.now().isoformat()
-        }
+    metadata = {
+        i: {"title": chunk["title"], "url": chunk["url"], "content": chunk["content"]}
+        for i, chunk in enumerate(chunks)
     }
-    try:
-        with open(FEEDBACK_FILE_PATH, "a", encoding="utf-8") as file:
-            file.write(json.dumps(feedback_entry, ensure_ascii=False) + "\n")
-        st.success("✅ Feedback wurde lokal gespeichert!")
-    except Exception as e:
-        st.error(f"❌ Fehler beim Speichern des Feedbacks: {e}")
 
-# 🔄 Vektorspeicher nach Feedback aktualisieren
-def update_vector_store_with_feedback(completion):
-    if "vectorstore" in st.session_state and completion:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        try:
-            st.session_state.vectorstore.add_texts([completion], embedding=embeddings)
-            st.success("🧠 Vektorspeicher wurde mit dem neuen Feedback aktualisiert!")
-        except Exception as e:
-            st.error(f"❌ Fehler beim Aktualisieren des Vektorspeichers: {e}")
+    # Speichere den FAISS-Index
+    faiss.write_index(index, faiss_path)
 
-# 📊 Letzte Feedback-Einträge anzeigen
-def show_last_feedback_entries():
-    feedback_data = load_feedback_locally()[-3:]
-    st.markdown("### 📄 **Letzte Feedback-Einträge:**")
-    for entry in feedback_data:
-        st.json(entry)
+    # Speichere die Metadaten
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=4)
 
-# 📝 Antwort generieren
-def generate_response_with_feedback(vectorstore, query, model, k=5):
-    keywords = extract_keywords_with_llm(model, query)
-    relevant_content = vectorstore.similarity_search(query, k=k)
-    context = "\n".join([doc.page_content if hasattr(doc, "page_content") else doc.content for doc in relevant_content])
+    return index, metadata
 
-    prompt_template = f"""
-    Kontext: {context}
+# 🔖 FAISS Index und Metadaten laden
+def load_faiss_index(faiss_path, metadata_path):
+    if not os.path.exists(faiss_path) or not os.path.exists(metadata_path):
+        return None, None
+
+    index = faiss.read_index(faiss_path)
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    return index, metadata
+
+# 🔎 Relevante Passagen abrufen
+def get_relevant_passages(query, index, metadata, n_results=5):
+    model = "models/embedding-001"
+    query_embedding = genai.embed_content(model=model, content=query, task_type="retrieval_document")["embedding"]
+    query_embedding = np.array(query_embedding, dtype="float32").reshape(1, -1)
+
+    distances, indices = index.search(query_embedding, n_results)
+    return [metadata[str(idx)] for idx in indices[0]]
+
+# 🔄 RAG-Prompt erstellen
+def make_rag_prompt(query, relevant_passages):
+    passages = " ".join([p["content"].replace("\n", " ") for p in relevant_passages])
+    return f"""
+    Du bist ein hilfsbereiter Chatbot, der bei der Jobsuche unterstützt. Zeige die Jobbeschreibungen und das Profil und den standort an
+
     Frage: {query}
+    Beschreibung: {passages}
 
-    Antworte strukturiert und präzise.
+    Antwort:
     """
 
-    try:
-        response = model.generate_content(prompt_template)
-        return response.text
-    except Exception as e:
-        st.error(f"Fehler bei der Antwortgenerierung: {e}")
-        return "Fehler bei der Antwortgenerierung."
-
-# 💾 Feedback-Button Callback
-def feedback_callback(feedback_type):
-    # Feedback als Antwort oder Kommentar speichern
-    feedback_response = st.session_state.feedback_comment if feedback_type == "👎" and st.session_state.feedback_comment.strip() else st.session_state.generated_result
-
-    # Feedback im neuen Format speichern
-    save_feedback_locally(st.session_state.query_input, feedback_response)
-    update_vector_store_with_feedback(feedback_response)
-    st.session_state.feedback_saved = True
+# 🕊 Antwort generieren
+def generate_answer(prompt):
+    model = genai.GenerativeModel(model_name="gemini-pro")
+    return model.generate_content(prompt).text
 
 # 🚀 Hauptprozess
 def main():
-    api_key = load_api_keys()
-    genai.configure(api_key=api_key)
+    load_api_keys()
+    st.set_page_config(page_title="RAG System mit JSONL und Gemini", page_icon=":robot:")
+    st.header("RAG-System mit Google Gemini und JSONL-Daten")
 
-    st.set_page_config(page_title="Körber AI Chatbot", page_icon=":factory:")
-    st.header("🔍 Wie können wir dir weiterhelfen?")
+    # Pfade für FAISS und Metadaten
+    faiss_path = "faiss_index.bin"
+    metadata_path = "faiss_metadata.json"
 
-    if "vectorstore" not in st.session_state:
-        with st.spinner("Daten werden geladen..."):
-            documents = load_koerber_data()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=600)
-            text_chunks = [{"content": chunk, "url": doc["url"]} for doc in documents for chunk in text_splitter.split_text(doc["content"])]
-            st.session_state.vectorstore = get_vector_store(text_chunks)
+    # JSONL-Daten laden
+    jsonl_path = st.sidebar.text_input("Pfad zur JSONL-Datei:", "rag_data.jsonl")
 
-    st.session_state.query_input = st.text_input("Stellen Sie hier Ihre Frage:", value=st.session_state.get("query_input", ""))
-    generate_button = st.button("Antwort generieren")
+    # Globale Variablen für Index und Metadaten
+    global index, metadata
 
-    if generate_button and st.session_state.query_input:
-        with st.spinner("Antwort wird generiert..."):
-            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
-            st.session_state.generated_result = generate_response_with_feedback(st.session_state.vectorstore, st.session_state.query_input, model)
+    # FAISS und Metadaten laden oder erstellen
+    index, metadata = load_faiss_index(faiss_path, metadata_path)
 
-            st.success("📝 Antwort:")
-            st.write(st.session_state.generated_result)
+    if index is None or metadata is None:
+        if st.sidebar.button("Daten laden"):
+            documents = load_jsonl(jsonl_path)
+            st.success(f"{len(documents)} Dokumente geladen.")
 
-    st.session_state.feedback_comment = st.text_input("Korrekte Antwort eingeben (optional):", value=st.session_state.get("feedback_comment", ""))
+            # Chunks erstellen und Embeddings generieren
+            with st.spinner("Erstelle Chunks und Embeddings..."):
+                chunks = create_chunks(documents)
+                embeddings = generate_embeddings(chunks)
+                index, metadata = create_faiss_index(embeddings, chunks, faiss_path, metadata_path)
+                st.success("FAISS-Index erfolgreich erstellt.")
 
-    col1, col2 = st.columns(2)
+    # Suchfunktion
+    search_query = st.text_input("Suchanfrage eingeben:")
 
-    # 👍 Feedback-Button
-    col1.button("👍 Antwort war hilfreich", on_click=feedback_callback, args=("👍",))
+    # Überprüfen, ob Index und Metadaten geladen wurden
+    if index is None or metadata is None:
+        st.warning("Bitte laden Sie die Daten zuerst über die Seitenleiste.")
+        return
 
-    # 👎 Feedback-Button
-    col2.button("👎 Antwort verbessern", on_click=feedback_callback, args=("👎",))
+    if st.button("Suche durchführen"):
+        with st.spinner("Suche relevante Passagen..."):
+            relevant_passages = get_relevant_passages(search_query, index, metadata)
 
-    if st.session_state.get("feedback_saved"):
-        show_last_feedback_entries()
-        st.session_state.feedback_saved = False
+            if relevant_passages:
+                st.write("Relevante Passagen:")
+                for passage in relevant_passages:
+                    st.write(f"**{passage['title']}**")
+                    st.write(f"[Zur Jobbeschreibung]({passage['url']})")
+                    st.write(passage["content"])
+                    st.markdown("---")
+
+                # Antwort generieren
+                prompt = make_rag_prompt(search_query, relevant_passages)
+                answer = generate_answer(prompt)
+                st.write("Antwort:")
+                st.write(answer)
+            else:
+                st.warning("Keine relevanten Passagen gefunden.")
 
 if __name__ == "__main__":
     main()
