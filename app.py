@@ -1,9 +1,11 @@
 import os
 import streamlit as st
 import google.generativeai as genai
+from langchain_community.vectorstores.faiss import FAISS
+from langchain.docstore.document import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from datasets import load_dataset
-import faiss
-import numpy as np
 import json
 
 # 🔑 API-Schlüssel laden
@@ -12,7 +14,7 @@ def load_api_keys():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        st.error("GOOGLE_API_KEY fehlt. Bitte in der .env-Datei setzen.")
+        st.error("GEMINI_API_KEY fehlt. Bitte in der .env-Datei setzen.")
         st.stop()
     genai.configure(api_key=api_key)
 
@@ -30,152 +32,123 @@ def load_jsonl(file_path):
         } for doc in dataset["train"]
     ]
 
-# 🧩 Text in Chunks aufteilen
-def create_chunks(documents, chunk_size=400, overlap=10):
+# 🧩 Chunks mit LangChain erstellen
+def create_chunks(documents, chunk_size=10000, overlap=3000):
     """
-    Teilt Dokumente in überlappende Chunks auf.
-    Args:
-        documents (list): Liste von Dokumenten mit Textinhalten.
-        chunk_size (int): Maximale Größe eines Chunks in Zeichen.
-        overlap (int): Überlappung zwischen aufeinanderfolgenden Chunks.
-
-    Returns:
-        list: Liste von Chunks mit zugehörigen Metadaten.
+    Teilt Dokumente in Chunks mit LangChain.
     """
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
     chunks = []
     for doc in documents:
-        content = doc["content"]
-        for i in range(0, len(content), chunk_size - overlap):
-            chunk = content[i:i + chunk_size]
-            chunks.append({
-                "content": chunk,
-                "title": doc["title"],
-                "url": doc["url"]
-            })
+        splits = text_splitter.split_text(doc["content"])
+        for chunk in splits:
+            chunks.append(Document(page_content=chunk, metadata={"title": doc["title"], "url": doc["url"]}))
     return chunks
 
-# 🌟 Embedding erstellen
-def generate_embeddings(chunks):
-    model = "models/embedding-001"
-    embeddings = [
-        genai.embed_content(model=model, content=chunk["content"], task_type="retrieval_document")["embedding"]
-        for chunk in chunks
-    ]
-    return np.array(embeddings, dtype="float32")
+# 🌟 Vektorspeicher erstellen
+def create_vector_store(chunks, persist_path="faiss_index"):
+    """
+    Erstellt einen FAISS-Vektorspeicher mit LangChain und speichert ihn.
+    """
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    vectorstore = FAISS.from_documents(chunks, embedding=embeddings)
+    vectorstore.save_local(persist_path)
+    return vectorstore
 
-# 🔖 FAISS Index erstellen und speichern
-def create_faiss_index(embeddings, chunks, faiss_path, metadata_path):
-    index = faiss.IndexFlatL2(embeddings.shape[1])
-    index.add(embeddings)
+# 🌟 Vektorspeicher laden
+# 🌟 Vektorspeicher laden
+def load_vector_store(persist_path="faiss_index"):
+    """
+    Lädt einen vorhandenen FAISS-Vektorspeicher.
+    """
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    try:
+        return FAISS.load_local(persist_path, embeddings, allow_dangerous_deserialization=True)
+    except Exception as e:
+        st.error(f"Fehler beim Laden des Vektorspeichers: {e}")
+        return None
 
-    metadata = {
-        i: {"title": chunk["title"], "url": chunk["url"], "content": chunk["content"]}
-        for i, chunk in enumerate(chunks)
-    }
 
-    # Speichere den FAISS-Index
-    faiss.write_index(index, faiss_path)
-
-    # Speichere die Metadaten
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=4)
-
-    return index, metadata
-
-# 🔖 FAISS Index und Metadaten laden
-def load_faiss_index(faiss_path, metadata_path):
-    if not os.path.exists(faiss_path) or not os.path.exists(metadata_path):
-        return None, None
-
-    index = faiss.read_index(faiss_path)
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-    return index, metadata
-
-# 🔎 Relevante Passagen abrufen
-def get_relevant_passages(query, index, metadata, n_results=5):
-    model = "models/embedding-001"
-    query_embedding = genai.embed_content(model=model, content=query, task_type="retrieval_document")["embedding"]
-    query_embedding = np.array(query_embedding, dtype="float32").reshape(1, -1)
-
-    distances, indices = index.search(query_embedding, n_results)
-    return [metadata[str(idx)] for idx in indices[0]]
-
+# 🔄 RAG-Prompt erstellen (ohne Passagen-Auswahl)
 # 🔄 RAG-Prompt erstellen
-def make_rag_prompt(query, relevant_passages):
-    passages = " ".join([p["content"].replace("\n", " ") for p in relevant_passages])
-    return f"""
-    Du bist ein hilfsbereiter Chatbot, der bei der Jobsuche unterstützt. Zeige die Jobbeschreibungen und das Profil und den standort an
+def make_rag_prompt(query, relevant_passages, max_tokens=3000):
+    """
+    Erstellt ein RAG-Prompt mit den relevanten Passagen, wobei die Tokenanzahl begrenzt wird.
+    """
+    prompt_template = f"""
+    Du bist ein hilfsbereiter Chatbot, der bei der Jobsuche unterstützt. Zeige die relevanten Informationen zu den Jobs an.
 
     Frage: {query}
-    Beschreibung: {passages}
-
-    Antwort:
     """
+    token_count = len(prompt_template.split())
+    max_tokens_allowed = max_tokens - token_count
+
+    # Passagen hinzufügen, solange die Tokenanzahl unter dem Limit bleibt
+    selected_passages = []
+    for passage in relevant_passages:
+        passage_text = passage.page_content.replace("\n", " ")
+        if token_count + len(passage_text.split()) <= max_tokens_allowed:
+            selected_passages.append(passage_text)
+            token_count += len(passage_text.split())
+        else:
+            break
+
+    # Füge die ausgewählten Passagen in das Prompt ein
+    combined_passages = " ".join(selected_passages)
+    return f"{prompt_template}\n\nBeschreibungen der Jobs: {combined_passages}\n\nAntwort:"
+
 
 # 🕊 Antwort generieren
 def generate_answer(prompt):
+    """
+    Generiert eine Antwort basierend auf einem Prompt.
+    """
     model = genai.GenerativeModel(model_name="gemini-pro")
     return model.generate_content(prompt).text
 
 # 🚀 Hauptprozess
 def main():
     load_api_keys()
-    st.set_page_config(page_title="RAG System mit JSONL und Gemini", page_icon=":robot:")
-    st.header("RAG-System mit Google Gemini und JSONL-Daten")
+    st.set_page_config(page_title="RAG System mit LangChain und Gemini", page_icon=":robot:")
+    st.header("RAG-System mit LangChain und Google Gemini")
 
-    # Pfade für FAISS und Metadaten
-    faiss_path = "faiss_index.bin"
-    metadata_path = "faiss_metadata.json"
-
-    # JSONL-Daten laden
+    # Pfad zur JSONL-Datei
     jsonl_path = st.sidebar.text_input("Pfad zur JSONL-Datei:", "rag_data.jsonl")
 
-    # Globale Variablen für Index und Metadaten
-    global index, metadata
+    # Vektorspeicher-Pfad
+    vectorstore_path = "faiss_index"
 
-    # FAISS und Metadaten laden oder erstellen
-    index, metadata = load_faiss_index(faiss_path, metadata_path)
-
-    if index is None or metadata is None:
+    # Vektorspeicher laden oder erstellen
+    vectorstore = load_vector_store(vectorstore_path)
+    if not vectorstore:
         if st.sidebar.button("Daten laden"):
             documents = load_jsonl(jsonl_path)
             st.success(f"{len(documents)} Dokumente geladen.")
 
-            # Chunks erstellen und Embeddings generieren
-            with st.spinner("Erstelle Chunks und Embeddings..."):
+            # Chunks erstellen und Vektorspeicher generieren
+            with st.spinner("Erstelle Chunks und Vektorspeicher..."):
                 chunks = create_chunks(documents)
-                embeddings = generate_embeddings(chunks)
-                index, metadata = create_faiss_index(embeddings, chunks, faiss_path, metadata_path)
-                st.success("FAISS-Index erfolgreich erstellt.")
+                vectorstore = create_vector_store(chunks, persist_path=vectorstore_path)
+                st.success("Vektorspeicher erfolgreich erstellt und gespeichert.")
 
     # Suchfunktion
     search_query = st.text_input("Suchanfrage eingeben:")
-
-    # Überprüfen, ob Index und Metadaten geladen wurden
-    if index is None or metadata is None:
-        st.warning("Bitte laden Sie die Daten zuerst über die Seitenleiste.")
-        return
-
     if st.button("Suche durchführen"):
-        with st.spinner("Suche relevante Passagen..."):
-            relevant_passages = get_relevant_passages(search_query, index, metadata)
+        if not vectorstore:
+            st.warning("Bitte laden Sie die Daten zuerst.")
+            return
 
-            if relevant_passages:
-                st.write("Relevante Passagen:")
-                for passage in relevant_passages:
-                    st.write(f"**{passage['title']}**")
-                    st.write(f"[Zur Jobbeschreibung]({passage['url']})")
-                    st.write(passage["content"])
-                    st.markdown("---")
+        with st.spinner("Generiere Antwort..."):
+            # Alle Dokumente aus dem Vektorspeicher abrufen
+            documents = vectorstore.similarity_search(query="", k=1000)
 
-                # Antwort generieren
-                prompt = make_rag_prompt(search_query, relevant_passages)
-                answer = generate_answer(prompt)
-                st.write("Antwort:")
-                st.write(answer)
-            else:
-                st.warning("Keine relevanten Passagen gefunden.")
+            # Prompt erstellen
+            prompt = make_rag_prompt(search_query, documents)
+            
+            # Antwort generieren
+            answer = generate_answer(prompt)
+            st.write("Antwort:")
+            st.write(answer)
 
 if __name__ == "__main__":
     main()
