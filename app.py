@@ -281,15 +281,15 @@ def display_recent_queries(log_path="search_log.json", max_queries=3):
 def main():
     load_api_keys()
     st.set_page_config(page_title="Frag Körber", page_icon=":robot:")
-    st.header("Frag Körber")
+    
 
     # Körber-Logo anzeigen (kleiner)
     st.image(
         "https://upload.wikimedia.org/wikipedia/commons/8/88/Koerber_Logo_black.svg",
         width=200,  # Breite in Pixel
-        caption="Körber Logo"
+        
     )
-
+    st.header("Frag Körber")
     # Pfad zur JSONL-Datei
     jsonl_path = st.sidebar.text_input("Pfad zur JSONL-Datei:", "cleaned_rag_data.jsonl")
 
