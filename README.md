@@ -1,7 +1,7 @@
 RAG-Assistant
 
 ## 📖 Projektbeschreibung
-Eine Streamlit-App, die den Körber-Datensatz in einem RAG-Ansatz nutzt.
+Eine Streamlit-App, die einen Webgecrawlten-Datensatz in einem RAG-Ansatz nutzt.
 
 ## 🚀 Installation
 
